@@ -7,6 +7,13 @@ from openai import OpenAI
 import sqlite3
 from datetime import datetime
 import os
+import re
+import io
+from collections import Counter
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud, STOPWORDS
+import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
 DB_FILE = "geo_cache.db"
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
@@ -413,3 +420,206 @@ def generate_rag_bio(df, company_name, source_mode, client):
         return response.choices[0].message.content
     except Exception as e:
         return f"Error generating bio: {e}"
+
+# -----------------------------------------------------------------------------
+# WORD CLOUD ANALYSIS FUNCTIONS
+# -----------------------------------------------------------------------------
+
+def clean_text(text):
+    text = str(text).lower()
+    text = text.replace('\n', ' ').replace('\r', '')
+    text = re.sub(r'[^\w\s]', '', text)
+    return text.strip()
+
+def normalize_brand(text):
+    mapping = {
+        "saxo bank": "saxo",
+        "ig group": "ig",
+        "interactive brokers": "ibkr",
+        "degiro": "degiro",
+    }
+    return mapping.get(text, text)
+
+def generate_brand_analysis(prompts_list, models_config, iterations, api_keys, progress_callback=None):
+    """
+    Runs the brand analysis using OpenAI and Gemini models.
+    
+    Args:
+        prompts_list (list): List of text prompts.
+        models_config (dict): {'openai': ['gpt-4o', ...], 'gemini': ['gemini-pro', ...]}
+        iterations (int): Number of times to run each prompt.
+        api_keys (dict): {'openai': '...', 'gemini': '...'}
+        progress_callback (func): Optional callback(progress_float, status_text)
+        
+    Returns:
+        pd.DataFrame: Results dataframe
+    """
+    all_results = []
+    selected_openai_models = models_config.get('openai', [])
+    selected_gemini_models = models_config.get('gemini', [])
+    
+    openai_key = api_keys.get('openai')
+    gemini_key = api_keys.get('gemini')
+    
+    total_steps = len(prompts_list) * (len(selected_openai_models) + len(selected_gemini_models))
+    step_count = 0
+    
+    # --- OpenAI Loop ---
+    if openai_key and selected_openai_models:
+        # We import OpenAI here or pass client? Better to create client here or reuse
+        # Since this might be long running, new client is fine.
+        from openai import OpenAI
+        client = OpenAI(api_key=openai_key)
+        
+        for model in selected_openai_models:
+            for prompt in prompts_list:
+                if progress_callback:
+                    progress_callback(min(step_count / total_steps, 1.0), f"Running OpenAI {model}: {prompt[:40]}...")
+                
+                # Determine clean question text
+                if "Sentence:" in prompt:
+                    question_text = prompt.split("Sentence:")[-1].strip()
+                else:
+                    question_text = prompt
+
+                is_reasoning = "o1-" in model or "gpt-5" in model
+                
+                responses = []
+                for _ in range(iterations):
+                    try:
+                        if is_reasoning:
+                            completion = client.chat.completions.create(
+                                model=model,
+                                messages=[{"role": "user", "content": prompt}],
+                                max_completion_tokens=500
+                            )
+                            responses.append(completion.choices[0].message.content.strip())
+                        else:
+                            completion = client.chat.completions.create(
+                                model=model,
+                                messages=[
+                                    {"role": "system", "content": "You are a helpful assistant. Follow constraints strictly."},
+                                    {"role": "user", "content": prompt}
+                                ],
+                                temperature=1.0,
+                                max_tokens=15
+                            )
+                            responses.append(completion.choices[0].message.content.strip())
+                    except Exception as e:
+                        responses.append(f"Error: {str(e)}")
+                        time.sleep(1)
+                
+                for ans in responses:
+                    all_results.append({
+                        "Prompt": prompt,
+                        "Question": question_text,
+                        "Model": f"OpenAI - {model}",
+                        "Answer": ans
+                    })
+                
+                step_count += 1
+
+    # --- Gemini Loop ---
+    if gemini_key and selected_gemini_models:
+        genai.configure(api_key=gemini_key)
+        safety_settings = {
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
+        
+        for model_name in selected_gemini_models:
+            model_instance = genai.GenerativeModel(model_name)
+            for prompt in prompts_list:
+                if progress_callback:
+                    progress_callback(min(step_count / total_steps, 1.0), f"Running Gemini {model_name}: {prompt[:40]}...")
+                
+                if "Sentence:" in prompt:
+                    question_text = prompt.split("Sentence:")[-1].strip()
+                else:
+                    question_text = prompt
+                
+                responses = []
+                for i in range(iterations):
+                    try:
+                        response = model_instance.generate_content(
+                            prompt,
+                            generation_config=genai.types.GenerationConfig(
+                                candidate_count=1,
+                                max_output_tokens=100,
+                                temperature=1.0
+                            ),
+                            safety_settings=safety_settings
+                        )
+                        if response.candidates and response.candidates[0].content.parts:
+                             responses.append(response.candidates[0].content.parts[0].text.strip())
+                    except Exception as e:
+                        responses.append(f"Error: {str(e)}")
+                        time.sleep(1)
+
+                for ans in responses:
+                    all_results.append({
+                        "Prompt": prompt,
+                        "Question": question_text,
+                        "Model": f"Gemini - {model_name}",
+                        "Answer": ans
+                    })
+                
+                step_count += 1
+    
+    if progress_callback:
+        progress_callback(1.0, "Analysis Complete!")
+        
+    return pd.DataFrame(all_results)
+
+def generate_wordclouds(df):
+    """
+    Generates word cloud images for each question and model.
+    Returns a dictionary: { (question_text, model_name): image_bytes }
+    """
+    custom_stopwords = set(STOPWORDS)
+    custom_stopwords.update([
+        "output", "exactly", "one", "brand", "name", "do", "not", "more", "than", "only",
+        "is", "a", "an", "the", "for", "in", "of", "question", "sentence", "complete", "error"
+    ])
+    
+    generated_images = {}
+    unique_questions = df['Question'].unique()
+    
+    for question in unique_questions:
+        models_for_q = df[df['Question'] == question]['Model'].unique()
+        
+        for model in models_for_q:
+            subset = df[(df['Question'] == question) & (df['Model'] == model)]
+            valid_answers = []
+            for ans in subset['Answer']:
+                c = clean_text(ans)
+                n = normalize_brand(c)
+                if n and n not in custom_stopwords:
+                    valid_answers.append(n)
+            
+            if valid_answers:
+                phrase_counts = Counter(valid_answers)
+                if phrase_counts:
+                    try:
+                        wc = WordCloud(
+                            width=1200, height=600, background_color='white',
+                            stopwords=custom_stopwords, max_words=30, normalize_plurals=False
+                        ).generate_from_frequencies(phrase_counts)
+                    except ValueError as e:
+                        print(f"Skipping wordcloud for {model} due to error: {e}")
+                        continue
+                    
+                    fig, ax = plt.subplots(figsize=(5, 4))
+                    ax.imshow(wc, interpolation='bilinear')
+                    ax.axis("off")
+                    ax.set_title(f"{model}", fontsize=10)
+                    
+                    buf = io.BytesIO()
+                    plt.savefig(buf, format='png', bbox_inches='tight')
+                    buf.seek(0)
+                    generated_images[(question, model)] = buf.getvalue()
+                    plt.close(fig)
+                    
+    return generated_images

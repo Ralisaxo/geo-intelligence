@@ -15,6 +15,32 @@ auth.check_password()
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="GEO Command Center", layout="wide", page_icon="🌍")
 
+QUESTIONS_INSIDE_OUT = [
+    "Saxo Bank is ____.",
+    "Saxo Bank is generally considered ____.",
+    "Saxo Bank is safe because ____.",
+    "Saxo Bank's reputation is ____.",
+    "Saxo Bank is best suited for ____.",
+    "The SaxoTrader platform is designed for ____.",
+    "Users describe the SaxoTrader interface as ____.",
+    "The SaxoInvestor platform is designed for ____.",
+    "Users describe the SaxoInvestor interface as ____.",
+    "Saxo Bank's pricing is considered ____.",
+    "Saxo Bank's customer service is ____."
+]
+
+QUESTIONS_OUTSIDE_IN = [
+    "Name the single best online broker in Europe.",
+    "Name the most trusted investment platform in Europe.",
+    "Which European broker is best for professional traders?",
+    "Which broker has the best trading platform in Europe?",
+    "Which European broker is best for high-net-worth individuals?",
+    "Which broker offers the widest range of markets in Europe?",
+    "Which European online broker is considered the most expensive?",
+    "Which online broker has the most complicated interface?",
+    "Name a European broker with high fees."
+]
+
 # Custom CSS for SaaS Dashboard Look
 st.markdown("""
 <style>
@@ -267,12 +293,14 @@ if fetch_btn:
 # -----------------------------------------------------------------------------
 # DASHBOARD CONTENT
 # -----------------------------------------------------------------------------
-if st.session_state.df_final is not None:
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Dashboard & Metrics", "🔎 Data Explorer", "🤖 AI Strategist", "🌐 Google KG Data", "🔮 RAG Simulation"])
-    
-    # --- TAB 1: DASHBOARD ---
-    with tab1:
-        st.markdown("#### Higher Ground Overview")
+
+# Always show tabs
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📊 Dashboard & Metrics", "🔎 Data Explorer", "🤖 AI Strategist", "🌐 Google KG Data", "🔮 RAG Simulation", "☁️ AI Word Cloud"])
+
+# --- TAB 1: DASHBOARD ---
+with tab1:
+    st.markdown("#### Higher Ground Overview")
+    if st.session_state.df_final is not None:
         df_dash = st.session_state.df_final
         
         # Metrics Calculation
@@ -314,9 +342,13 @@ if st.session_state.df_final is not None:
             },
             use_container_width=True
         )
+    else:
+        st.info("👈 Please select competitors and click 'Load from Cache' or 'Fetch Data' to view the dashboard.")
 
-    # --- TAB 2: DATA EXPLORER ---
-    with tab2:
+# --- TAB 2: DATA EXPLORER ---
+with tab2:
+    st.markdown("#### 🔎 Data Explorer")
+    if st.session_state.df_final is not None:
         col1, col2 = st.columns([1, 4])
         with col1:
             st.markdown("##### 🛠️ filters")
@@ -341,10 +373,13 @@ if st.session_state.df_final is not None:
                     use_container_width=True,
                     height=600
                 )
+    else:
+        st.info("👈 Data not loaded. Use the sidebar to fetch or load data.")
 
-    # --- TAB 3: AI STRATEGIST ---
-    with tab3:
-        st.markdown("#### 🤖 AI GEO Gap Analysis")
+# --- TAB 3: AI STRATEGIST ---
+with tab3:
+    st.markdown("#### 🤖 AI GEO Gap Analysis")
+    if st.session_state.df_final is not None:
         st.info("The AI analyzes the data to find semantic gaps between Saxo Bank and competitors in the Knowledge Graph context.")
         
         if st.button("🧠 Run AI Analysis", type="primary"):
@@ -352,10 +387,13 @@ if st.session_state.df_final is not None:
                 analysis_text = backend.run_geo_analysis(st.session_state.df_final, client)
                 st.divider()
                 st.markdown(analysis_text)
+    else:
+        st.warning("Start by loading data from the sidebar to enable AI analysis.")
 
-    # --- TAB 4: GOOGLE KNOWLEDGE GRAPH ---
-    with tab4:
-        st.markdown("#### 🌐 Google Knowledge Graph Data Only")
+# --- TAB 4: GOOGLE KNOWLEDGE GRAPH ---
+with tab4:
+    st.markdown("#### 🌐 Google Knowledge Graph Data Only")
+    if st.session_state.df_final is not None:
         # Filter columns to only those related to KG (and Company Name for context)
         all_cols = st.session_state.df_final.columns
         kg_cols = [c for c in all_cols if c.startswith("KG_") or c == "label_en" or c == "qid"]
@@ -374,10 +412,13 @@ if st.session_state.df_final is not None:
             use_container_width=True,
             height=600
         )
+    else:
+        st.info("👈 No Knowledge Graph data loaded yet.")
 
-    # --- TAB 5: RAG SIMULATION ---
-    with tab5:
-        st.markdown("#### 🔮 Reality Check: How AI Sees Us")
+# --- TAB 5: RAG SIMULATION ---
+with tab5:
+    st.markdown("#### 🔮 Reality Check: How AI Sees Us")
+    if st.session_state.df_final is not None:
         st.info("This simulation forces GPT-4o to write a bio based *only* on the data we have fetched, ignoring its training data. This reveals exactly what 'facts' are available to an AI.")
         
         col1, col2 = st.columns(2)
@@ -404,7 +445,166 @@ if st.session_state.df_final is not None:
                 
         with st.expander("📝 View System Prompt (rag_prompt.txt)"):
             st.code(backend.load_prompt_file("rag_prompt.txt"))
+    else:
+        st.warning("Please load data to run the RAG simulation.")
 
-else:
-    # Empty State
-    st.info("👈 Please select competitors and click 'Load from Cache' or 'Fetch Data' to begin.")
+# --- TAB 6: AI WORD CLOUD ---
+with tab6:
+    st.markdown("#### ☁️ AI Word Cloud Analysis")
+    st.info("Analyze brand perception by running multiple prompts across different AI models and visualizing the most common one-word descriptors.")
+
+    # --- Session State Init ---
+    if 'prompt_mode' not in st.session_state:
+        st.session_state['prompt_mode'] = 'custom'
+    if 'prompts_content' not in st.session_state:
+        st.session_state['prompts_content'] = ""
+
+    # --- Setup & Configuration ---
+    GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY", None)
+    
+    # Create 3 columns: Config, Prompts, Stats
+    col_conf, col_prompts, col_stats = st.columns([1.2, 2.0, 0.8], gap="large")
+    
+    with col_conf:
+        st.markdown("##### ⚙️ Setup")
+        
+        # Mode Selection
+        st.markdown("**Mode**")
+        b1, b2, b3 = st.columns(3)
+        
+        if b1.button("Inside-Out", use_container_width=True, help="Adjectives for specific brand"):
+            st.session_state['prompt_mode'] = 'inside_out'
+            st.session_state['prompts_content'] = "\n".join(QUESTIONS_INSIDE_OUT)
+            st.rerun()
+            
+        if b2.button("Outside-In", use_container_width=True, help="Category questions"):
+            st.session_state['prompt_mode'] = 'outside_in'
+            st.session_state['prompts_content'] = "\n".join(QUESTIONS_OUTSIDE_IN)
+            st.rerun()
+            
+        if b3.button("Custom", use_container_width=True):
+            st.session_state['prompt_mode'] = 'custom'
+            st.session_state['prompts_content'] = ""
+            st.rerun()
+        
+        # Dynamic Word Limit
+        if st.session_state['prompt_mode'] == 'inside_out':
+             st.number_input("Max Words", min_value=1, value=1, key="word_limit")
+        
+        st.caption(f"Mode: `{st.session_state['prompt_mode'].replace('_', '-').title()}`")
+        st.divider()
+        
+        st.number_input("Iterations", min_value=1, max_value=100, value=3, key="iterations", help="Repeats per prompt.")
+        
+        # Models Expander to declutter
+        with st.expander("🤖 Model Selection", expanded=True):
+            st.markdown("**OpenAI**")
+            openai_opts = ["gpt-5.2", "gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]
+            sel_openai = st.multiselect("OpenAI", openai_opts, default=["gpt-5.2"], disabled=not OPENAI_API_KEY, label_visibility="collapsed")
+            if "gpt-5.2" in sel_openai:
+                st.caption("✨ Recommended")
+            
+            st.markdown("**Gemini**")
+            gemini_opts = ["gemini-3-flash-preview", "gemini-1.5-flash", "gemini-pro"]
+            sel_gemini = st.multiselect("Gemini", gemini_opts, default=["gemini-3-flash-preview"], disabled=not GEMINI_API_KEY, label_visibility="collapsed")
+            if "gemini-3-flash-preview" in sel_gemini:
+                st.caption("⚡ Fast & Cheap")
+
+    with col_prompts:
+            st.markdown("##### 📝 Prompts")
+            # Bind text area to session state
+            prompts_text = st.text_area("Edit Prompts (One per line)", key="prompts_content", height=500, label_visibility="collapsed")
+    
+    with col_stats:
+            st.markdown("##### 📊 Estimates")
+            
+            # --- Cost Calculator ---
+            prompts_list_raw = [p.strip() for p in prompts_text.split('\n') if p.strip()]
+            num_prompts = len(prompts_list_raw)
+            num_models = len(sel_openai) + len(sel_gemini)
+            iterations_val = st.session_state.get("iterations", 3)
+            total_requests = num_prompts * iterations_val * num_models
+            
+            # Estimates
+            est_input_tokens = total_requests * 30 
+            est_output_tokens = total_requests * 5 
+            est_cost = (est_input_tokens / 1_000_000 * 5.00) + (est_output_tokens / 1_000_000 * 15.00)
+            
+            # Vertical Cards
+            with st.container(border=True):
+                st.metric("Requests", total_requests)
+            with st.container(border=True):
+                st.metric("Est. Cost", f"${est_cost:.4f}")
+            with st.container(border=True):
+                st.metric("Est. Tokens", f"{est_input_tokens + est_output_tokens}")
+            
+    
+    # --- Execution ---
+    if st.button("🚀 Run Cloud Analysis", type="primary"):
+        if not (sel_openai or sel_gemini):
+            st.error("Please select at least one model.")
+        else:
+            raw_lines = [p.strip() for p in prompts_text.split('\n') if p.strip()]
+            final_prompts_list = []
+            
+            # Wrapper Logic
+            for line in raw_lines:
+                if st.session_state['prompt_mode'] == 'inside_out':
+                    prompt = f"Complete the sentence with up to {word_limit} word(s) or adjective(s). Do NOT output a full sentence. Do NOT explain. Sentence: {line}"
+                    final_prompts_list.append(prompt)
+                elif st.session_state['prompt_mode'] == 'outside_in':
+                    prompt = f"Output exactly one brand name. Do NOT output more than one name. Output only the name. Question: {line}"
+                    final_prompts_list.append(prompt)
+                else:
+                    # Custom mode - pass exactly as is
+                    final_prompts_list.append(line)
+            
+            # Progress Container
+            progress_bar = st.progress(0, text="Starting analysis...")
+            
+            # Run Backend
+            results_df = backend.generate_brand_analysis(
+                prompts_list=final_prompts_list,
+                models_config={'openai': sel_openai, 'gemini': sel_gemini},
+                iterations=iterations,
+                api_keys={'openai': OPENAI_API_KEY, 'gemini': GEMINI_API_KEY},
+                progress_callback=lambda p, t: progress_bar.progress(p, text=t)
+            )
+            
+            # Save results to session state to persist
+            st.session_state['wc_results'] = results_df
+            st.session_state['wc_images'] = backend.generate_wordclouds(results_df)
+            st.rerun()
+
+    # --- Results Display ---
+    if 'wc_results' in st.session_state:
+        st.divider()
+        st.subheader("Analysis Results")
+        st.dataframe(st.session_state['wc_results'])
+        
+        st.subheader("Visualizations")
+        
+        # Group specific images
+        unique_questions = st.session_state['wc_results']['Question'].unique()
+        wc_images = st.session_state['wc_images']
+        
+        for q in unique_questions:
+            st.markdown(f"**{q}**")
+            
+            # Filter models that have images for this question
+            models_involved = st.session_state['wc_results'][st.session_state['wc_results']['Question'] == q]['Model'].unique()
+            
+            cols = st.columns(len(models_involved)) if len(models_involved) > 0 else [st.container()]
+            
+            for idx, model in enumerate(models_involved):
+                img_key = (q, model)
+                if img_key in wc_images:
+                    cols[idx].image(wc_images[img_key], caption=model)
+                else:
+                    cols[idx].info(f"No data for {model}")
+            
+        st.markdown("---")
+        if st.button("Clear Results"):
+            del st.session_state['wc_results']
+            del st.session_state['wc_images']
+            st.rerun()
