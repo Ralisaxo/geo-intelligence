@@ -550,7 +550,8 @@ with tab6:
             # Wrapper Logic
             for line in raw_lines:
                 if st.session_state['prompt_mode'] == 'inside_out':
-                    prompt = f"Complete the sentence with up to {word_limit} word(s) or adjective(s). Do NOT output a full sentence. Do NOT explain. Sentence: {line}"
+                    limit = st.session_state.get('word_limit', 1)
+                    prompt = f"Complete the sentence with up to {limit} word(s) or adjective(s). Do NOT output a full sentence. Do NOT explain. Sentence: {line}"
                     final_prompts_list.append(prompt)
                 elif st.session_state['prompt_mode'] == 'outside_in':
                     prompt = f"Output exactly one brand name. Do NOT output more than one name. Output only the name. Question: {line}"
@@ -566,7 +567,7 @@ with tab6:
             results_df = backend.generate_brand_analysis(
                 prompts_list=final_prompts_list,
                 models_config={'openai': sel_openai, 'gemini': sel_gemini},
-                iterations=iterations,
+                iterations=st.session_state.get('iterations', 3),
                 api_keys={'openai': OPENAI_API_KEY, 'gemini': GEMINI_API_KEY},
                 progress_callback=lambda p, t: progress_bar.progress(p, text=t)
             )
