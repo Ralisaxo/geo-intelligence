@@ -382,9 +382,18 @@ with tab3:
     if st.session_state.df_final is not None:
         st.info("The AI analyzes the data to find semantic gaps between Saxo Bank and competitors in the Knowledge Graph context.")
         
+        # Model Selection for Strategist
+        st.markdown("**Analysis Model**")
+        model_options = {
+            "GPT-4o (Default)": "gpt-4o",
+            "GPT-5.2": "gpt-5.2-2025-12-11"
+        }
+        selected_label = st.selectbox("Select Model", list(model_options.keys()), index=0, label_visibility="collapsed")
+        selected_model_id = model_options[selected_label]
+        
         if st.button("🧠 Run AI Analysis", type="primary"):
-            with st.spinner("Analyzing semantics and authority signals..."):
-                analysis_text = backend.run_geo_analysis(st.session_state.df_final, client)
+            with st.spinner(f"Analyzing semantics with {selected_label}..."):
+                analysis_text = backend.run_geo_analysis(st.session_state.df_final, client, model=selected_model_id)
                 st.divider()
                 st.markdown(analysis_text)
     else:

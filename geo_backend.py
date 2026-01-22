@@ -335,7 +335,7 @@ def search_knowledge_graph(query, api_key, kg_id=None):
 # -----------------------------------------------------------------------------
 # AI ANALYSIS FUNCTIONS
 # -----------------------------------------------------------------------------
-def run_geo_analysis(df, client):
+def run_geo_analysis(df, client, model="gpt-4o"):
     saxo_qid = "Q1325291"
     saxo_row = df[df['qid'] == saxo_qid]
     
@@ -358,7 +358,7 @@ def run_geo_analysis(df, client):
     
     try:
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": f"Here is the data for Saxo Bank and top competitors:\n\n{csv_data}"}
