@@ -465,12 +465,11 @@ with tab5:
     with col2:
         st.markdown("**Compare with concept(s) (separate by comma or new line):**")
         # Use session state for the text area to allow button updates
-        if "target_concepts_input" not in st.session_state:
-            st.session_state.target_concepts_input = ""
+        if "input_concepts_area" not in st.session_state:
+            st.session_state.input_concepts_area = ""
             
         target_input = st.text_area(
             "Target Concept(s)", 
-            value=st.session_state.target_concepts_input,
             placeholder="e.g. versatile, safe, exclusive", 
             label_visibility="collapsed",
             key="input_concepts_area"
