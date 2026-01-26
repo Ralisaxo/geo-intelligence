@@ -1,0 +1,2 @@
+Prompt Input: ["it's fantastic"]
+Raw Response: {"it's fantastic": "Positive"}

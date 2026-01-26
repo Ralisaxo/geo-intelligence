@@ -14,6 +14,8 @@ import matplotlib.pyplot as plt
 from wordcloud import WordCloud, STOPWORDS
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
+import numpy as np
+from sklearn.decomposition import PCA
 
 DB_FILE = "geo_cache.db"
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
@@ -420,6 +422,178 @@ def generate_rag_bio(df, company_name, source_mode, client):
         return response.choices[0].message.content
     except Exception as e:
         return f"Error generating bio: {e}"
+
+def get_semantic_similarity(text1, text2, api_key):
+    """
+    Computes semantic similarity between two texts using Gemini embeddings.
+    Returns: (Score (0-100 float), vector1, vector2)
+    """
+    if not api_key:
+        return 0.0, None, None
+
+    genai.configure(api_key=api_key)
+    
+    try:
+        # Get embeddings
+        result = genai.embed_content(
+            model="models/text-embedding-004",
+            content=[text1, text2],
+            task_type="semantic_similarity"
+        )
+        
+        if 'embedding' not in result:
+             # Fallback
+             v1 = genai.embed_content(model="models/text-embedding-004", content=text1)['embedding']
+             v2 = genai.embed_content(model="models/text-embedding-004", content=text2)['embedding']
+        else:
+             v1 = result['embedding'][0]
+             v2 = result['embedding'][1]
+
+        # Convert to numpy arrays
+        vec1 = np.array(v1)
+        vec2 = np.array(v2)
+
+        # Cosine Similarity
+        dot_product = np.dot(vec1, vec2)
+        norm_v1 = np.linalg.norm(vec1)
+        norm_v2 = np.linalg.norm(vec2)
+
+        if norm_v1 == 0 or norm_v2 == 0:
+            return 0.0, vec1, vec2
+
+        similarity = dot_product / (norm_v1 * norm_v2)
+        # Return Raw Cosine Similarity (0.0 - 1.0)
+        return float(similarity), vec1, vec2
+
+    except Exception as e:
+        print(f"Error in semantic similarity: {e}")
+        return 0.0, None, None
+
+def calculate_display_score(raw_score):
+    """
+    Normalizes raw cosine similarity (typically 0.35-0.65) to a 0-100% human-readable scale.
+    """
+    # Anchor points based on data analysis
+    min_anchor = 0.35  # Scores below this become 0%
+    max_anchor = 0.60  # Scores above this become 100%
+
+    # Linear normalization
+    if raw_score <= min_anchor:
+        return 0.0
+    if raw_score >= max_anchor:
+        return 100.0
+
+    return ((raw_score - min_anchor) / (max_anchor - min_anchor)) * 100
+
+def batch_sentiment_analysis(phrases, api_key):
+    """
+    Classifies sentiment for a list of phrases using Gemini Flash.
+    Returns: Dict {phrase: "Positive"/"Negative"/"Neutral"}
+    """
+    if not phrases or not api_key:
+        return {}
+
+    genai.configure(api_key=api_key)
+    # Use specific version requested
+    model = genai.GenerativeModel('gemini-2.5-flash-lite')
+    
+    prompt = f"""
+    You are a Brand Reputation Analyst for an investment bank. 
+    Classify the sentiment of the following adjectives strictly as 'Positive', 'Negative', or 'Neutral' in the context of a financial trading platform. 
+    Examples: 'Risky' is Negative. 'Expensive' is Negative. 'Complex' is Negative. 'Robust' is Positive.
+    Input: {json.dumps(phrases)}
+    Output JSON: {{phrase: sentiment}}
+    Do not use markdown formatting. Return raw JSON.
+    """
+    
+    try:
+        response = model.generate_content(prompt)
+        text = response.text.strip()
+        # Clean potential markdown
+        if text.startswith("```json"):
+            text = text[7:]
+        if text.endswith("```"):
+            text = text[:-3]
+        
+        # LOGGING FOR DEBUGGING
+        with open("sentiment_debug.txt", "w", encoding="utf-8") as f:
+            f.write(f"Prompt Input: {json.dumps(phrases)}\n")
+            f.write(f"Raw Response: {text}\n")
+
+        try:
+            raw_result = json.loads(text)
+        except json.JSONDecodeError:
+             # Try to find JSON in text if extra text exists
+             import re
+             json_match = re.search(r'\{.*\}', text, re.DOTALL) or re.search(r'\[.*\]', text, re.DOTALL)
+             if json_match:
+                 raw_result = json.loads(json_match.group())
+             else:
+                 raise ValueError("No JSON found")
+
+        # Parsing Logic
+        lookup_map = {}
+        
+        # Case 1: Dict {phrase: sentiment}
+        if isinstance(raw_result, dict):
+            lookup_map = {str(k).lower(): v for k, v in raw_result.items()}
+            
+        # Case 2: List of Dicts [{phrase: "...", sentiment: "..."}, ...] or [{"phrase": "...", "sentiment": "..."}]
+        elif isinstance(raw_result, list):
+            for item in raw_result:
+                if isinstance(item, dict):
+                    # Try to find values generically
+                    vals = list(item.values())
+                    if len(vals) >= 2:
+                        # Assumption: One is the phrase, one is the sentiment
+                        # Heuristic: Phrase is in input list (lower)
+                        k = None
+                        v = None
+                        for val in vals:
+                            if str(val).lower() in [p.lower() for p in phrases]:
+                                k = val
+                            elif str(val).title() in ["Positive", "Negative", "Neutral"]:
+                                v = val
+                        
+                        if k and v:
+                            lookup_map[str(k).lower()] = v
+        
+        normalized = {}
+        for phrase in phrases:
+            p_lower = phrase.lower()
+            val = "Neutral"
+            
+            if p_lower in lookup_map:
+                val = str(lookup_map[p_lower]).title()
+            
+            if val not in ["Positive", "Negative", "Neutral"]:
+                 val = "Neutral"
+            
+            normalized[phrase] = val
+             
+        return normalized
+
+    except Exception as e:
+        with open("sentiment_debug_error.txt", "w") as f:
+            f.write(f"Error: {e}")
+        print(f"Error in batch sentiment: {e}")
+        return {p: "Neutral" for p in phrases}
+
+def reduce_dimensions(vectors_list):
+    """
+    Reduces list of vectors to 2D using PCA.
+    Returns: List of [x, y] coordinates.
+    """
+    if len(vectors_list) < 2:
+        return []
+    
+    try:
+        pca = PCA(n_components=2)
+        reduced = pca.fit_transform(vectors_list)
+        return reduced.tolist()
+    except Exception as e:
+        print(f"PCA Error: {e}")
+        return []
 
 # -----------------------------------------------------------------------------
 # WORD CLOUD ANALYSIS FUNCTIONS
