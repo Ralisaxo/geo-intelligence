@@ -292,7 +292,7 @@ if fetch_btn:
 # -----------------------------------------------------------------------------
 
 # Always show tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(["📊 Dashboard & Metrics", "🔎 Data Explorer", "🤖 AI Strategist", "🌐 Google KG Data", "📐 Semantic Triples", "🔮 RAG Simulation", "☁️ AI Word Cloud"])
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(["📊 Dashboard & Metrics", "🔎 Data Explorer", "🤖 AI Strategist", "🌐 Google KG Data", "📐 Semantic Triples", "🔮 RAG Simulation", "☁️ AI Word Cloud", "📢 Reddit Intel"])
 
 # --- TAB 1: DASHBOARD ---
 with tab1:
@@ -889,3 +889,194 @@ with tab7:
             del st.session_state['wc_results']
             del st.session_state['wc_images']
             st.rerun()
+
+# --- TAB 8: REDDIT INTEL ---
+with tab8:
+    st.markdown("#### 📢 Reddit Intelligence")
+    st.info("Analyze the sentiment of Reddit threads towards Saxo Bank using AI. Fetches thread content and top comments.")
+    
+    # Target Brand
+    target_brand = st.text_input("Brand to Analyze", value="Saxo Bank")
+
+    # Input Method Toggle
+    input_method = st.radio("Input Method", ["Search Reddit", "Paste URLs"], index=0, horizontal=True, label_visibility="collapsed")
+    
+    urls_to_analyze = []
+    
+    # -------------------------------------------------------------------------
+    # MODE A: PASTE URLS
+    # -------------------------------------------------------------------------
+    if input_method == "Paste URLs":
+        reddit_urls = st.text_area("Paste Reddit Thread URLs (one per line)", height=150)
+        
+        # Dynamic Cost Estimator for Paste
+        if reddit_urls:
+            lines = [l for l in reddit_urls.split('\n') if l.strip()]
+            count = len(lines)
+            cost = count * 0.015
+            st.caption(f"Estimated Analysis Cost: ~${cost:.3f} ({count} threads)")
+            
+        if st.button("Analyze Threads", type="primary"):
+            urls_to_analyze = [url.strip() for url in reddit_urls.split('\n') if url.strip()]
+
+    # -------------------------------------------------------------------------
+    # MODE B: SEARCH REDDIT
+    # -------------------------------------------------------------------------
+    else:
+        with st.container(border=True):
+            cols_search = st.columns([3, 1, 1])
+            query = cols_search[0].text_input("Search Keywords", placeholder="e.g. Saxo Bank review", label_visibility="collapsed")
+            sort_by = cols_search[1].selectbox("Sort", ["relevance", "hot", "top", "new"], label_visibility="collapsed")
+            time_filter = cols_search[2].selectbox("Time", ["all", "year", "month", "week"], index=1, label_visibility="collapsed")
+            
+            # Limit Slider
+            limit_val = st.slider("Max Results", 1, 20, 5)
+            
+            # Dynamic Cost Estimator
+            est_cost = limit_val * 0.015
+            st.info(f"💰 Estimated Analysis Cost: ~${est_cost:.2f} (based on GPT-4o)", icon="ℹ️")
+            
+            if st.button("🔎 Find & Analyze", type="primary"):
+                 # Init Client First to Search
+                try:
+                    reddit_client = backend.get_reddit_client(st.secrets)
+                except FileNotFoundError:
+                     reddit_client = None
+                
+                if not reddit_client:
+                    st.error("Missing Reddit API credentials.")
+                elif not query:
+                    st.warning("Please enter search keywords.")
+                else:
+                    with st.spinner("Searching Reddit..."):
+                        found_urls = backend.search_reddit(
+                            query, 
+                            sort_by=sort_by, 
+                            time_filter=time_filter, 
+                            limit=limit_val, 
+                            reddit_client=reddit_client
+                        )
+                        
+                        if not found_urls:
+                            st.warning("No threads found matching criteria.")
+                        else:
+                            urls_to_analyze = found_urls
+                            st.success(f"Found {len(found_urls)} threads. Starting analysis...")
+                            time.sleep(1)
+
+    # -------------------------------------------------------------------------
+    # MAIN EXECUTION LOOP
+    # -------------------------------------------------------------------------
+    if urls_to_analyze:
+        urls = urls_to_analyze # normalized name
+        
+        if not urls:
+             st.warning("No URLs to process.")
+        else:
+            # Init Client (Duplicate check but safe)
+            try:
+                reddit_client = backend.get_reddit_client(st.secrets)
+            except FileNotFoundError:
+                 reddit_client = None
+            
+            if not reddit_client:
+                st.error("Missing Reddit API credentials in .streamlit/secrets.toml.")
+            else:
+                progress_bar = st.progress(0, text="Initializing...")
+                results = []
+                
+                total = len(urls)
+                for idx, url in enumerate(urls):
+                    progress_bar.progress((idx) / total, text=f"Fetching thread {idx+1}/{total}...")
+                    
+                    # 1. Fetch
+                    data = backend.fetch_reddit_data(url, reddit_client)
+                    
+                    if data["error"]:
+                        results.append({
+                            "Sentiment": "Error",
+                            "Title": "Error fetching data",
+                            "Summary": data["error"],
+                            "Link": url
+                        })
+                    else:
+                        # 2. Analyze
+                        progress_bar.progress((idx + 0.5) / total, text=f"Analyzing sentiment for thread {idx+1}...")
+                        analysis = backend.analyze_reddit_sentiment(data["context"], client, target_brand=target_brand)
+                        
+                        results.append({
+                            "Sentiment": analysis.get("sentiment", "Unknown"),
+                            "Subreddit": data.get("subreddit", "Unknown"),
+                            "Title": data["title"],
+                            "Summary": analysis.get("summary", "No summary generated."),
+                            "Link": url
+                        })
+                
+                progress_bar.progress(1.0, text="Analysis Complete!")
+                st.session_state['reddit_results'] = pd.DataFrame(results)
+                
+    # Display Results
+    if 'reddit_results' in st.session_state:
+        st.divider()
+        
+        # View Toggle
+        view_mode = st.radio("Display Mode", ["Feed View", "Table View"], horizontal=True)
+        
+        df_results = st.session_state['reddit_results']
+        
+        if view_mode == "Table View":
+            def color_sentiment(val):
+                color = ''
+                if val == 'Positive':
+                    color = 'color: #2ecc71; font-weight: bold'
+                elif val == 'Negative':
+                    color = 'color: #e74c3c; font-weight: bold'
+                elif val == 'Neutral':
+                    color = 'color: #95a5a6'
+                elif val == 'Mixed':
+                    color = 'color: #f39c12'
+                return color
+
+            st.dataframe(
+                df_results.style.map(color_sentiment, subset=['Sentiment']),
+                column_config={
+                    "Subreddit": st.column_config.TextColumn("Subreddit", width="small"),
+                    "Link": st.column_config.LinkColumn("Thread URL", display_text="Open Thread"),
+                    "Summary": st.column_config.TextColumn("AI Summary", width="large")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+            
+        else: # Feed View
+            st.markdown("---")
+            # Convert to list of dicts to avoid iterrows artifacts
+            results_list = df_results.to_dict('records')
+            
+            for row in results_list:
+                sentiment = row['Sentiment']
+                
+                # Sentiment Colors/Icons
+                header_color = "gray"
+                icon = "⚪"
+                if sentiment == 'Positive':
+                    header_color = "#2ecc71"
+                    icon = "🟢"
+                elif sentiment == 'Negative':
+                    header_color = "#e74c3c"
+                    icon = "🔴"
+                elif sentiment == 'Mixed':
+                    header_color = "#f39c12"
+                    icon = "🟠"
+                
+                with st.container(border=True):
+                    # Custom Header
+                    st.markdown(f"##### {icon} <span style='color:{header_color}'>r/{row['Subreddit']}: {row['Title']}</span>", unsafe_allow_html=True)
+                    st.caption(f"Sentiment: **{sentiment}**")
+                    
+                    # Full Body
+                    st.markdown(row['Summary'])
+                    
+                    # Link
+                    st.link_button("Open on Reddit", row['Link'])
+

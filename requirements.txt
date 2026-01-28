@@ -6,3 +6,4 @@ google-generativeai
 wordcloud
 matplotlib
 scikit-learn
+praw

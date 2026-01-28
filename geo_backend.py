@@ -1,4 +1,5 @@
 import pandas as pd
+import praw
 import requests
 import json
 import time
@@ -797,3 +798,117 @@ def generate_wordclouds(df):
                     plt.close(fig)
                     
     return generated_images
+
+# -----------------------------------------------------------------------------
+# REDDIT INTEL FUNCTIONS
+# -----------------------------------------------------------------------------
+
+def get_reddit_client(secrets):
+    """
+    Initializes PRAW Reddit client from secrets.
+    """
+    try:
+        if "reddit" not in secrets:
+            return None
+        
+        r_creds = secrets["reddit"]
+        reddit = praw.Reddit(
+            client_id=r_creds["client_id"],
+            client_secret=r_creds["client_secret"],
+            user_agent=r_creds["user_agent"]
+        )
+        # Quick check if read-only mode works (doesn't auth full user, just app)
+        return reddit
+    except Exception as e:
+        print(f"Error initializing Reddit client: {e}")
+        return None
+
+def fetch_reddit_data(url, reddit_client):
+    """
+    Fetches thread title, body, and top comments.
+    Returns: dict with details or error.
+    """
+    try:
+        submission = reddit_client.submission(url=url)
+        
+        # Trigger fetch
+        _ = submission.title
+        
+        # Flatten comments (top level only or flattened tree? User asked for Top 20)
+        submission.comments.replace_more(limit=0)
+        top_comments = submission.comments.list()[:20]
+        
+        comments_text = []
+        for c in top_comments:
+            comments_text.append(f"- {c.body}")
+            
+        full_context = f"TITLE: {submission.title}\n\nBODY: {submission.selftext}\n\nTOP COMMENTS:\n" + "\n".join(comments_text)
+        
+        return {
+            "title": submission.title,
+            "subreddit": submission.subreddit.display_name,
+            "url": url,
+            "context": full_context,
+            "error": None
+        }
+    except Exception as e:
+        return {
+            "title": "Error",
+            "url": url,
+            "context": "",
+            "error": str(e)
+        }
+
+def analyze_reddit_sentiment(context_text, client, target_brand="Saxo Bank", model="gpt-4o"):
+    """
+    Analyzes sentiment specifically for {target_brand} using OpenAI.
+    """
+    system_prompt = f"""You are a Brand Reputation Analyst. Analyze this Reddit thread context. Your specific focus is {target_brand}.
+    
+    1. Sentiment: Determine the sentiment specifically towards {target_brand} (Positive, Negative, Neutral, Mixed). If {target_brand} is not mentioned, return 'Irrelevant'.
+    2. Summary: Write a 2-3 sentence summary of why the sentiment is such. Quote specific user complaints or praises if found.
+    
+    Output strictly as JSON: {{"sentiment": "...", "summary": "..."}}
+    """
+    
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Analyze this thread:\n\n{context_text}"}
+            ],
+            response_format={"type": "json_object"}
+        )
+        
+        result_text = response.choices[0].message.content
+        return json.loads(result_text)
+    except Exception as e:
+        return {"sentiment": "Error", "summary": str(e)}
+
+def search_reddit(query, sort_by="relevance", time_filter="year", limit=5, reddit_client=None):
+    """
+    Searches Reddit for threads matching the query.
+    Returns: List of URLs.
+    """
+    if not reddit_client or not query:
+        return []
+        
+    try:
+        # Search all subreddits
+        # synxtax: subreddit("all").search(query, sort=..., time_filter=..., limit=...)
+        search_results = reddit_client.subreddit("all").search(
+            query, 
+            sort=sort_by, 
+            time_filter=time_filter, 
+            limit=limit
+        )
+        
+        urls = []
+        for submission in search_results:
+            urls.append(f"https://www.reddit.com{submission.permalink}")
+            
+        return urls
+    except Exception as e:
+        print(f"Search Error: {e}")
+        return []
