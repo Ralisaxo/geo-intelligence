@@ -912,3 +912,177 @@ def search_reddit(query, sort_by="relevance", time_filter="year", limit=5, reddi
     except Exception as e:
         print(f"Search Error: {e}")
         return []
+
+def extract_thread_id(url):
+    """
+    Extracts the Reddit Thread ID from a URL using regex.
+    Handles formats like:
+    - .../comments/1ias4s0/title/
+    - .../comments/1ias4s0/
+    - .../comments/1ias4s0/title/?query=param
+    """
+    if not url:
+        return None
+    # Look for /comments/ followed by alphanumeric ID
+    match = re.search(r'/comments/([a-z0-9]+)', url)
+    if match:
+        return match.group(1)
+    return None
+
+def fetch_accuranker_prompts_raw(brand_id, api_token):
+    """
+    Fetches all prompts from AccuRanker for a given brand.
+    Returns: List of prompt dictionaries (raw data).
+    """
+    if not brand_id or not api_token:
+        return []
+        
+    url = f"https://app.accuranker.com/api/v4/brands/{brand_id}/prompts/"
+    headers = {
+        "Authorization": f"Token {api_token}",
+        "Accept": "application/json",
+    }
+    
+    # Request fields needed for both tag extraction and processing
+    params = {
+        "fields": "id,prompt,tags,results.created_at,results.sources.url,results.sources.title,results.sources.rank",
+        "limit": 1000
+    }
+    
+    prompts = []
+    
+    try:
+        while url:
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Extract results
+            chunk = []
+            if isinstance(data, list):
+                chunk = data
+                url = None # simple list means no pagination usually
+            elif isinstance(data, dict):
+                chunk = data.get('results', [])
+                url = data.get('next') # Update URL for next page
+                # Params are part of the 'next' URL usually, so we reset params to avoid duplication or conflict
+                # However, usually 'next' includes everything.
+                if url:
+                   params = None 
+            
+            prompts.extend(chunk)
+            
+            # Safety break
+            if len(prompts) > 10000:
+                print("Hit safety limit of 10000 prompts")
+                break
+                
+        return prompts
+
+    except Exception as e:
+        print(f"AccuRanker API Error: {e}")
+        return prompts
+
+def process_accuranker_prompts_for_reddit(prompts, tag_filter="Commercial"):
+    """
+    Processes a list of AccuRanker prompts.
+    1. Filters by tag (case-insensitive).
+    2. Aggregates Reddit sources by Thread ID.
+    
+    Returns: 
+        - curated_list: List of dicts for the table [{'url': ..., 'count': ...}]
+        - relevant_prompts: List of prompt objects that matched the filter (for display)
+    """
+    # Store aggregated counts: {thread_id: {'count': 0, 'slug': None}}
+    thread_data = {}
+    
+    matched_prompts = []
+    total_tag_prompts = 0
+    
+    tag_filter_lower = tag_filter.lower() if tag_filter else None
+    
+    for p in prompts:
+        # 1. Filter by Tag
+        tags = p.get('tags', [])
+        tags_lower = [t.lower() for t in tags]
+        
+        # If tag_filter is provided, check strict membership
+        if tag_filter_lower:
+            if tag_filter_lower not in tags_lower:
+                continue
+        
+        # This prompt matches our filter
+        total_tag_prompts += 1
+        matched_prompts.append(p)
+            
+        # 2. Get Results History
+        results_history = p.get('results', [])
+        if not results_history:
+            continue
+            
+        # 3. Find Latest Date (YYYY-MM-DD)
+        dates = [r.get('created_at', '')[:10] for r in results_history if r.get('created_at')]
+        if not dates:
+            continue
+            
+        latest_date_str = max(dates)
+        
+        # 4. Filter results to this date
+        current_results = [r for r in results_history if r.get('created_at', '').startswith(latest_date_str)]
+
+        # 5. Extract Sources and Deduplicate PER PROMPT by Thread ID
+        unique_threads_in_prompt = {} # id -> url found
+        
+        for res in current_results:
+            sources = res.get('sources', [])
+            for s in sources:
+                s_url = s.get('url', '')
+                if "reddit.com" in s_url.lower():
+                        t_id = extract_thread_id(s_url)
+                        if t_id:
+                            # Store URL for slug extraction later
+                            unique_threads_in_prompt[t_id] = s_url
+                        
+        # 6. Update Global Counts
+        for t_id, s_url in unique_threads_in_prompt.items():
+            if t_id not in thread_data:
+                thread_data[t_id] = {'count': 0, 'slug': None}
+            
+            thread_data[t_id]['count'] += 1
+            
+            # Attempt to extract slug if not yet found
+            if not thread_data[t_id]['slug'] and s_url:
+                    # Check if URL has a slug segment after the ID
+                    clean_s_url = s_url.split('?')[0].rstrip('/')
+                    parts = clean_s_url.split('/')
+                    # Find 'comments' index
+                    try:
+                        idx_comments = parts.index('comments')
+                        if len(parts) > idx_comments + 2:
+                            raw_slug = parts[idx_comments + 2]
+                            formatted_slug = raw_slug.replace('_', ' ').capitalize()
+                            thread_data[t_id]['slug'] = formatted_slug
+                    except ValueError:
+                        pass
+        
+    # Convert to list of dicts for DataFrame
+    final_list = []
+    for t_id, info in thread_data.items():
+        # Calculation: (Unique Prompts Citing Thread / Total Tag Prompts)
+        count = info['count']
+        pct = (count / total_tag_prompts * 100) if total_tag_prompts > 0 else 0
+        
+        # Construct clean compatible URL
+        clean_url = f"https://www.reddit.com/comments/{t_id}/"
+        
+        final_list.append({
+            "url": clean_url, 
+            "count": count,
+            "percentage": pct,
+            "title": info['slug'] if info['slug'] else "Unknown Title"
+        })
+    
+    # Sort by count descending
+    final_list.sort(key=lambda x: x['count'], reverse=True)
+    
+    return final_list, matched_prompts

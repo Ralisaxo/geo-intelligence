@@ -14,7 +14,7 @@ auth.check_password()
 # -----------------------------------------------------------------------------
 # CONFIGURATION & SETUP
 # -----------------------------------------------------------------------------
-st.set_page_config(page_title="GEO Command Center", layout="wide", page_icon="🌍")
+st.set_page_config(page_title="Saxo GEO Command Center", layout="wide", page_icon="🌍")
 
 QUESTIONS_INSIDE_OUT = [
     "Saxo Bank is ____.",
@@ -87,7 +87,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # -----------------------------------------------------------------------------
 # MAIN APP HEADER
 # -----------------------------------------------------------------------------
-st.title("🌍 GEO Command Center")
+st.title("🌍 Saxo GEO Command Center")
 st.markdown("### Authority Gap & Brand Intelligence Dashboard")
 
 # -----------------------------------------------------------------------------
@@ -899,7 +899,7 @@ with tab8:
     target_brand = st.text_input("Brand to Analyze", value="Saxo Bank")
 
     # Input Method Toggle
-    input_method = st.radio("Input Method", ["Search Reddit", "Paste URLs"], index=0, horizontal=True, label_visibility="collapsed")
+    input_method = st.radio("Input Method", ["Search Reddit", "Paste URLs", "AccuLLM Sources"], index=0, horizontal=True, label_visibility="collapsed")
     
     urls_to_analyze = []
     
@@ -922,7 +922,7 @@ with tab8:
     # -------------------------------------------------------------------------
     # MODE B: SEARCH REDDIT
     # -------------------------------------------------------------------------
-    else:
+    elif input_method == "Search Reddit":
         with st.container(border=True):
             cols_search = st.columns([3, 1, 1])
             query = cols_search[0].text_input("Search Keywords", placeholder="e.g. Saxo Bank review", label_visibility="collapsed")
@@ -963,6 +963,182 @@ with tab8:
                             urls_to_analyze = found_urls
                             st.success(f"Found {len(found_urls)} threads. Starting analysis...")
                             time.sleep(1)
+
+    # -------------------------------------------------------------------------
+    # MODE C: COMMERCIAL GEO (ACCURANKER)
+    # -------------------------------------------------------------------------
+    else:
+        ACCURANKER_BRANDS = {
+            "GEO Experiments (10000419)": 10000419,
+            "Saxo BE (10000083)": 10000083,
+            "Saxo CH (10000084)": 10000084,
+            "Saxo CZ (10000085)": 10000085,
+            "Saxo DK (10000087)": 10000087,
+            "Saxo FR (10000090)": 10000090,
+            "Saxo Institutional (10000275)": 10000275,
+            "Saxo IT (10000092)": 10000092,
+            "Saxo JP (10000095)": 10000095,
+            "Saxo MENA (10000120)": 10000120,
+            "Saxo NL (10000097)": 10000097,
+            "Saxo PL (10000117)": 10000117,
+            "Saxo SG (10000124)": 10000124,
+            "Saxo UK (10000079)": 10000079
+        }
+        
+        st.markdown("##### 🌍 AccuLLM Sources")
+        st.caption("Identify Reddit threads acting as 'AI Sources' in commercial queries.")
+        
+        selected_brand_key = st.selectbox("Select Market/Brand", list(ACCURANKER_BRANDS.keys()))
+        selected_brand_id = ACCURANKER_BRANDS[selected_brand_key]
+        
+        # Init Session State for AccuRanker Data if not present
+        if 'accuranker_data' not in st.session_state:
+            st.session_state['accuranker_data'] = None
+
+        # Check for API Token
+        try:
+            accuranker_token = st.secrets["ACCURANKER_TOKEN"]
+        except KeyError:
+            st.error("Missing ACCURANKER_TOKEN in .streamlit/secrets.toml")
+            accuranker_token = None
+        
+        if accuranker_token:
+            # 1. Fetch Button
+            if st.button("Fetch AI Sources"):
+                with st.spinner("Fetching data from AccuRanker API..."):
+                    # Fetch RAW prompts
+                    raw_prompts = backend.fetch_accuranker_prompts_raw(selected_brand_id, accuranker_token)
+                    
+                    if not raw_prompts:
+                        st.warning("No data found for this brand (or API error).")
+                        st.session_state['accuranker_prompts_raw'] = None
+                        st.session_state['accuranker_data'] = None
+                    else:
+                        st.session_state['accuranker_prompts_raw'] = raw_prompts
+                        st.success(f"Fetched {len(raw_prompts)} prompts.")
+                
+            # 2. Tag Selection & Processing
+            if st.session_state.get('accuranker_prompts_raw'):
+                raw_pro = st.session_state['accuranker_prompts_raw']
+                
+                # Extract unique tags
+                all_tags = set()
+                for p in raw_pro:
+                    if p.get('tags'):
+                        for t in p['tags']:
+                            all_tags.add(t)
+                
+                sorted_tags = sorted(list(all_tags))
+                
+                # Determine default index (Commercial)
+                # We want "Commercial" to be default if exists, case-insensitive match
+                default_idx = 0
+                for i, t in enumerate(sorted_tags):
+                    if t.lower() == "commercial":
+                        default_idx = i
+                        break
+                
+                selected_tag = st.selectbox("Select Tag", sorted_tags, index=default_idx)
+                
+                # Process Data Based on Tag
+                # We only re-process if tag changes or data is missing
+                # But for simplicity, we can process on every rerun if fast enough (1000 items is fast)
+                # Or we can store 'last_processed_tag' to optimize.
+                
+                # Let's just process it.
+                sources, relevant_prompts = backend.process_accuranker_prompts_for_reddit(raw_pro, tag_filter=selected_tag)
+                    
+                # Convert to DataFrame
+                if not sources:
+                     st.warning(f"No Reddit threads found in prompts with tag '{selected_tag}'.")
+                     st.session_state['accuranker_data'] = None
+                else:
+                    df_sources = pd.DataFrame(sources)
+                    df_sources.insert(0, "Select", False)
+                    df_sources.rename(columns={"url": "URL", "count": "Prompts", "percentage": "Cited %", "title": "Title"}, inplace=True)
+                    
+                    cols = ["Select", "Title", "URL", "Prompts", "Cited %"]
+                    cols = [c for c in cols if c in df_sources.columns]
+                    df_sources = df_sources[cols]
+                    
+                    st.session_state['accuranker_data'] = df_sources
+                
+                # 3. Prompts Viewer (New Feature)
+                with st.expander(f"View Prompts in Tag: {selected_tag} ({len(relevant_prompts)})", expanded=False):
+                    if relevant_prompts:
+                        # Create a simple dataframe for display
+                        prompt_data = []
+                        for p in relevant_prompts:
+                            # Get latest rank/url specific to the source? 
+                            # Just showing the keyword is probably main intent, but prompts usually have 'keyword' field?
+                            # Wait, the API response structure involves 'keyword_id' or similar? 
+                            # Actually AccuRanker prompts usually match a Keyword. 
+                            # Looking at previous debug prints, 'keyword' wasn't top level? 
+                            # Checking `debug_accuranker_fetch.txt` ...
+                            # Structure: {"id": 123, "tags": [...], "results": [...]}
+                            # It seems the 'keyword' text might be missing from the 'fields' I requested!
+                            # I requested: id,tags,results...
+                            # I should probably add 'keyword' to the fields in the backend to make this useful.
+                            # For now, I'll list the ID and Tags, but I should probably fix the backend to fetch 'keyword' text.
+                            # Let's assume 'keyword' field exists if requested.
+                            prompt_data.append({
+                                "Prompt": p.get('prompt', 'N/A'),
+                                "ID": p.get('id'),
+                                "Tags": ", ".join(p.get('tags', []))
+                            })
+                        st.dataframe(prompt_data, use_container_width=True)
+                    else:
+                        st.write("No ID details available.")
+        
+        # Display Results if available
+        if st.session_state['accuranker_data'] is not None:
+             # Create a container for the button ABOVE the table
+             toggles_container = st.container()
+             
+             edited_df = st.data_editor(
+                 st.session_state['accuranker_data'],
+                 column_config={
+                     "Select": st.column_config.CheckboxColumn("Analyze?", width="small"),
+                     "Title": st.column_config.TextColumn("Title", width="medium"),
+                     "Prompts": st.column_config.NumberColumn("Prompts", help="Number of prompts where this thread appeared"),
+                     "Cited %": st.column_config.NumberColumn("Cited %", format="%.1f%%", help="Percentage of commercial prompts citing this thread"),
+                     "URL": st.column_config.LinkColumn("Thread URL", width="large")
+                 },
+                 use_container_width=True,
+                 hide_index=True
+             )
+             
+             # Calculate statistics for the button dynamically
+             selected_rows = edited_df[edited_df["Select"] == True]
+             count_selected = len(selected_rows)
+             total_rows = len(edited_df)
+             
+             # Render button into the container above
+             with toggles_container:
+                 col1, col2, col3 = st.columns([2, 1, 1])
+                 
+                 with col1:
+                     if count_selected > 0:
+                         btn_text = f"Analyze {count_selected} out of {total_rows} Reddit threads"
+                         if st.button(btn_text, type="primary"):
+                             urls_to_analyze = selected_rows["URL"].tolist()
+                     else:
+                         if st.button(f"Analyze 0 out of {total_rows} Reddit threads", type="primary"):
+                             st.warning("Please tick off at least one thread to analyze.")
+                             
+                 with col2:
+                     if st.button("Select All", use_container_width=True):
+                         st.session_state['accuranker_data']['Select'] = True
+                         st.rerun()
+                         
+                 with col3:
+                     if st.button("Deselect All", use_container_width=True):
+                         st.session_state['accuranker_data']['Select'] = False
+                         st.rerun()
+
+             with st.expander("Debug: Raw API Response", expanded=False):
+                 st.write("Debug view of the underlying data structure.")
+                 st.json(st.session_state['accuranker_data'].to_dict(orient='records'))
 
     # -------------------------------------------------------------------------
     # MAIN EXECUTION LOOP
