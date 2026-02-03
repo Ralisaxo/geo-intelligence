@@ -427,252 +427,424 @@ with tab4:
 with tab5:
     st.markdown("#### 📐 Semantic Alignment Lab")
     
-    # Initialize Session State
+    # Mode Selector
+    mode = st.radio(
+        "Select Analysis Mode", 
+        ["Brand Diagnostics", "Free Compare (Weighted)", "Free Compare (Raw)"], 
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+    st.markdown("---")
+
+    # Initialize Session States
     if 'semantic_history' not in st.session_state:
         st.session_state['semantic_history'] = []
+    if 'free_compare_history' not in st.session_state:
+        st.session_state['free_compare_history'] = []
 
-    # Standard Diagnostic List
-    STANDARD_DIAGNOSTICS = [
-        "Trustworthy", "Risky", "Expensive", "Cheap", "Innovative", "Outdated", 
-        "User-friendly", "Complicated", "Professional", "Amateur", "Fast", "Slow", 
-        "Versatile", "Limited", "Global", "Local", "Transparent", "Opaque", "Elite", "Accessible",
-        "Robust", "Unstable", "Sophisticated", "Basic", "Personal", "Impersonal", "Flexible", "Rigid", "Secure", "Generic"
-    ]
-
-    # Layout
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("**Saxo is:**")
-        identity_options = [
-            "a digital broker for traders, investors, and institutional partners",
-            "for investors and traders with all levels of experience",
-            "a broker for curious people who want to make more of their money",
-            "trusted by 1.5 million+ clients",
-            "Custom..."
+    # -------------------------------------------------------------------------
+    # MODE A: BRAND DIAGNOSTICS (Existing Logic)
+    # -------------------------------------------------------------------------
+    if mode == "Brand Diagnostics":
+        # Standard Diagnostic List
+        STANDARD_DIAGNOSTICS = [
+            "Trustworthy", "Risky", "Expensive", "Cheap", "Innovative", "Outdated", 
+            "User-friendly", "Complicated", "Professional", "Amateur", "Fast", "Slow", 
+            "Versatile", "Limited", "Global", "Local", "Transparent", "Opaque", "Elite", "Accessible",
+            "Robust", "Unstable", "Sophisticated", "Basic", "Personal", "Impersonal", "Flexible", "Rigid", "Secure", "Generic"
         ]
-        statement_choice = st.radio("Select Identity Statement", identity_options, label_visibility="collapsed")
+
+        # Layout
+        col1, col2 = st.columns(2)
         
-        statement_a = statement_choice
-        if statement_choice == "Custom...":
-            statement_a = st.text_input("Enter custom statement", key="custom_identity_input")
+        with col1:
+            st.markdown("**Saxo is:**")
+            identity_options = [
+                "a digital broker for traders, investors, and institutional partners",
+                "for investors and traders with all levels of experience",
+                "a broker for curious people who want to make more of their money",
+                "trusted by 1.5 million+ clients",
+                "Custom..."
+            ]
+            statement_choice = st.radio("Select Identity Statement", identity_options, label_visibility="collapsed")
             
-    def load_standards_callback():
-        val = ", ".join(STANDARD_DIAGNOSTICS)
-        st.session_state.target_concepts_input = val
-        st.session_state.input_concepts_area = val
+            statement_a = statement_choice
+            if statement_choice == "Custom...":
+                statement_a = st.text_input("Enter custom statement", key="custom_identity_input")
+                
+        def load_standards_callback():
+            val = ", ".join(STANDARD_DIAGNOSTICS)
+            st.session_state.target_concepts_input = val
+            st.session_state.input_concepts_area = val
 
-    with col2:
-        st.markdown("**Compare with concept(s) (separate by comma or new line):**")
-        # Use session state for the text area to allow button updates
-        if "input_concepts_area" not in st.session_state:
-            st.session_state.input_concepts_area = ""
-            
-        target_input = st.text_area(
-            "Target Concept(s)", 
-            placeholder="e.g. versatile, safe, exclusive", 
-            label_visibility="collapsed",
-            key="input_concepts_area"
-        )
-        # Small button aligned under input
-        st.button("📋 Load Standard Adjectives", help="Populate with standard list", on_click=load_standards_callback)
+        with col2:
+            st.markdown("**Compare with concept(s) (separate by comma or new line):**")
+            # Use session state for the text area to allow button updates
+            if "input_concepts_area" not in st.session_state:
+                st.session_state.input_concepts_area = ""
+                
+            target_input = st.text_area(
+                "Target Concept(s)", 
+                placeholder="e.g. versatile, safe, exclusive", 
+                label_visibility="collapsed",
+                key="input_concepts_area"
+            )
+            # Small button aligned under input
+            st.button("📋 Load Standard Adjectives", help="Populate with standard list", on_click=load_standards_callback)
 
-    # Action Buttons
-    st.write("") # Spacer
-    calc_btn = st.button("Calculate Match", type="primary", use_container_width=True)
+        # Action Buttons
+        st.write("") # Spacer
+        calc_btn = st.button("Calculate Match", type="primary", use_container_width=True)
 
-    # Logic: Auto-Clear on Statement Change
-    if 'last_statement_a' not in st.session_state:
-        st.session_state.last_statement_a = statement_a
-    
-    # If the active statement changes, clear the history to avoid mixing contexts
-    if st.session_state.last_statement_a != statement_a:
-        st.session_state['semantic_history'] = []
-        st.session_state.last_statement_a = statement_a
-        # We don't rerun immediately to avoid flickering while typing custom statements, 
-        # but the table will be empty on next render.
-
-    # Logic: Calculate Match (Handles Batch)
-    if calc_btn:
-        # Get raw input from key if available, else from variable
-        raw_text = st.session_state.get("input_concepts_area", target_input)
+        # Logic: Auto-Clear on Statement Change
+        if 'last_statement_a' not in st.session_state:
+            st.session_state.last_statement_a = statement_a
         
-        if not statement_a or not raw_text.strip():
-            st.error("Please provide both a statement and at least one concept.")
-        elif statement_choice == "Custom..." and not statement_a.strip():
-             st.error("Please enter a custom statement.")
-        else:
-            # Parse Concepts
-            # Replace user newlines with commas, then split
-            normalized_text = raw_text.replace('\n', ',')
-            concepts = [c.strip() for c in normalized_text.split(',') if c.strip()]
+        # If the active statement changes, clear the history to avoid mixing contexts
+        if st.session_state.last_statement_a != statement_a:
+            st.session_state['semantic_history'] = []
+            st.session_state.last_statement_a = statement_a
+            # We don't rerun immediately to avoid flickering while typing custom statements, 
+            # but the table will be empty on next render.
+
+        # Logic: Calculate Match (Handles Batch)
+        if calc_btn:
+            # Get raw input from key if available, else from variable
+            raw_text = st.session_state.get("input_concepts_area", target_input)
             
-            if not concepts:
-                st.error("No valid concepts found.")
+            if not statement_a or not raw_text.strip():
+                st.error("Please provide both a statement and at least one concept.")
+            elif statement_choice == "Custom..." and not statement_a.strip():
+                 st.error("Please enter a custom statement.")
+            else:
+                # Parse Concepts
+                # Replace user newlines with commas, then split
+                normalized_text = raw_text.replace('\n', ',')
+                concepts = [c.strip() for c in normalized_text.split(',') if c.strip()]
+                
+                if not concepts:
+                    st.error("No valid concepts found.")
+                else:
+                    gemini_key = st.secrets.get("GEMINI_API_KEY")
+                    if not gemini_key:
+                        st.error("GEMINI_API_KEY not found in secrets.")
+                    else:
+                        progress_text = "Computing semantic vector compatibility..."
+                        progress_bar = st.progress(0, text=progress_text)
+                        
+                        # Always Run Sentiment Analysis (even for single concepts)
+                        progress_bar.progress(10, text="Analyzing sentiment...")
+                        sentiment_map = backend.batch_sentiment_analysis(concepts, gemini_key)
+                        
+                        total = len(concepts)
+                        for idx, concept in enumerate(concepts):
+                            raw_score, v1, v2 = backend.get_semantic_similarity(statement_a, concept, gemini_key)
+                            relevance = backend.calculate_display_score(raw_score)
+                            
+                            # Use mapped sentiment or default to Neutral if API fails
+                            sent = sentiment_map.get(concept, "Neutral")
+                            
+                            # DEDUPLICATION: Remove existing entry for this specific pair
+                            st.session_state['semantic_history'] = [
+                                row for row in st.session_state['semantic_history']
+                                if not (row['Statement A'] == statement_a and row['Statement B'] == concept)
+                            ]
+                            
+                            st.session_state['semantic_history'].append({
+                                "Statement A": statement_a,
+                                "Statement B": concept,
+                                "Raw Score": raw_score, 
+                                "Relevance": relevance,
+                                "Sentiment": sent,
+                                "_vector": v2 
+                            })
+                            
+                            # Update progress
+                            p = 10 + int((idx / total) * 90) if len(concepts) > 1 else 100
+                            progress_bar.progress(p, text=f"Comparing '{concept}'...")
+                            
+                        progress_bar.progress(100, text="Done!")
+                        time.sleep(0.5)
+                        st.rerun()
+
+        # --- RESULTS & VISUALIZATION ---
+        st.divider()
+        
+        if st.session_state['semantic_history']:
+            # Prepare Data for Visualization
+            history_df = pd.DataFrame(st.session_state['semantic_history'])
+            
+            # 1. HISTORY TABLE (Shown First)
+            col_res, col_clear = st.columns([4, 1])
+            with col_res:
+                st.markdown("##### History")
+            with col_clear:
+                if st.button("Clear History"):
+                    st.session_state['semantic_history'] = []
+                    st.rerun()
+
+            # Display DataEditor (excluding hidden vector column)
+            # Use Relevance for the table
+            display_df = history_df.drop(columns=['_vector', 'Score', 'Raw Score'], errors='ignore')
+
+            # Sort by Relevance Descending
+            if 'Relevance' in display_df.columns:
+                display_df = display_df.sort_values(by="Relevance", ascending=False)
+
+            # Custom Styling for Sentiment Text
+            def style_sentiment(val):
+                if val == "Positive":
+                    return 'color: #2ecc71; font-weight: bold'
+                elif val == "Negative":
+                    return 'color: #e74c3c; font-weight: bold'
+                elif val == "Neutral":
+                    return 'color: #95a5a6'
+                return ''
+
+            st.dataframe(
+                display_df.style.map(style_sentiment, subset=['Sentiment']),
+                column_config={
+                    "Relevance": st.column_config.ProgressColumn(
+                        "Relevance",
+                        format="%.1f%%",
+                        min_value=0,
+                        max_value=100
+                    ),
+                    "Sentiment": st.column_config.TextColumn("Sentiment")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            st.divider()
+
+            # 2. SEMANTIC SPACE CHART (Shown Second)
+            # Filter rows that have vectors
+            valid_history = [row for row in st.session_state['semantic_history'] if row.get('_vector') is not None]
+            
+            valid_vectors = [row['_vector'] for row in valid_history]
+            
+            if len(valid_history) >= 2 and len(valid_vectors) >= 2:
+                st.markdown("##### 🌌 Semantic Space")
+                
+                valid_labels = [row['Statement B'] for row in valid_history]
+                # Ensure we use 'Relevance' for chart consistency
+                valid_scores = [row.get('Relevance', 0) for row in valid_history]
+                valid_sentiments = [row.get('Sentiment', 'Neutral') for row in valid_history]
+                
+                # Reduce Dimensions
+                coords = backend.reduce_dimensions(valid_vectors)
+                
+                if coords:
+                    plot_df = pd.DataFrame(coords, columns=['x', 'y'])
+                    plot_df['Concept'] = valid_labels
+                    plot_df['Relevance'] = valid_scores
+                    plot_df['Sentiment'] = valid_sentiments
+                    
+                    # Define Color Scale
+                    domain = ["Positive", "Negative", "Neutral", "Unknown"]
+                    range_ = ["#2ecc71", "#e74c3c", "#95a5a6", "#17a2b8"]
+                    
+                    # Create Base Chart for Points
+                    base = alt.Chart(plot_df).encode(
+                        x=alt.X('x', axis=None),
+                        y=alt.Y('y', axis=None)
+                    )
+
+                    points = base.mark_circle().encode(
+                        color=alt.Color('Sentiment', scale=alt.Scale(domain=domain, range=range_)),
+                        size=alt.Size('Relevance', scale=alt.Scale(range=[100, 500]), legend=None),
+                        tooltip=[
+                            alt.Tooltip('Concept', title='Concept'),
+                            alt.Tooltip('Relevance', format='.1f', title='Relevance (%)'),
+                            alt.Tooltip('Sentiment', title='Sentiment')
+                        ]
+                    )
+                    
+                    # Optional: Text Labels (only if < 30 points to avoid clutter)
+                    chart_final = points
+                    if len(plot_df) < 30:
+                        text = base.mark_text(
+                            align='left',
+                            baseline='middle',
+                            dx=8,
+                            fontSize=10,
+                            color='white'
+                        ).encode(
+                            text='Concept',
+                            color=alt.value('white') # Force white for contrast
+                        )
+                        chart_final = points + text
+                    
+                    st.altair_chart(chart_final.interactive(), use_container_width=True)
+
+            elif len(valid_history) > 0:
+                st.info("⚠️ Add more data points (at least 2) to visualize the semantic space.")
+                
+            st.info("""
+            **ℹ️ Methodology Note:** The "Relevance" score is a calibrated metric designed to highlight meaningful differences. 
+            Raw vector similarity scores typically cluster between 0.35 and 0.65 due to the nature of language models. 
+            This tool normalizes that range to a 0–100% scale:
+            - **< 0%**: Semantic noise (irrelevant concepts).
+            - **> 80%**: Strong strategic alignment.
+            Raw cosine similarity is observed in the background logic.
+            """)
+
+    # -------------------------------------------------------------------------
+    # MODE B & C: FREE COMPARE
+    # -------------------------------------------------------------------------
+    else:
+        st.markdown(f"##### {mode}")
+        
+        # UI Inputs
+        fc_col1, fc_col2 = st.columns(2)
+        with fc_col1:
+            concept_a = st.text_input("Concept A (Single)")
+        with fc_col2:
+            concept_b = st.text_area("Concept B (Comma-separated)", height=100)
+            
+        fc_btn = st.button("Analyze Match", type="primary")
+        
+        # Logic
+        if fc_btn:
+            if not concept_a or not concept_b:
+                st.error("Please enter both concepts.")
             else:
                 gemini_key = st.secrets.get("GEMINI_API_KEY")
                 if not gemini_key:
                     st.error("GEMINI_API_KEY not found in secrets.")
                 else:
-                    progress_text = "Computing semantic vector compatibility..."
-                    progress_bar = st.progress(0, text=progress_text)
+                    # Parse Concept B
+                    b_concepts = [c.strip() for c in concept_b.replace('\n', ',').split(',') if c.strip()]
                     
-                    # Always Run Sentiment Analysis (even for single concepts)
-                    progress_bar.progress(10, text="Analyzing sentiment...")
-                    sentiment_map = backend.batch_sentiment_analysis(concepts, gemini_key)
-                    
-                    total = len(concepts)
-                    for idx, concept in enumerate(concepts):
-                        raw_score, v1, v2 = backend.get_semantic_similarity(statement_a, concept, gemini_key)
-                        relevance = backend.calculate_display_score(raw_score)
+                    if not b_concepts:
+                        st.error("No valid concepts found in Concept B.")
+                    else:
+                        progress_text = "Checking for duplicates..."
+                        progress_bar = st.progress(0, text=progress_text)
                         
-                        # Use mapped sentiment or default to Neutral if API fails
-                        sent = sentiment_map.get(concept, "Neutral")
+                        # 1. Identify existing pairs to avoid duplicates
+                        existing_pairs = set()
+                        for entry in st.session_state['free_compare_history']:
+                            # Store as tuple (Concept A, Concept B)
+                            # We strip and lower comparison to be safe, or just exact match?
+                            # User asked for "newly added words", suggesting exact string match logic usually.
+                            # Let's stick to exact logic but stripped as we stored it.
+                            existing_pairs.add((entry["Concept A"], entry["Concept B"]))
                         
-                        # DEDUPLICATION: Remove existing entry for this specific pair
-                        st.session_state['semantic_history'] = [
-                            row for row in st.session_state['semantic_history']
-                            if not (row['Statement A'] == statement_a and row['Statement B'] == concept)
-                        ]
-                        
-                        st.session_state['semantic_history'].append({
-                            "Statement A": statement_a,
-                            "Statement B": concept,
-                            "Raw Score": raw_score, 
-                            "Relevance": relevance,
-                            "Sentiment": sent,
-                            "_vector": v2 
-                        })
-                        
-                        # Update progress
-                        p = 10 + int((idx / total) * 90) if len(concepts) > 1 else 100
-                        progress_bar.progress(p, text=f"Comparing '{concept}'...")
-                        
-                    progress_bar.progress(100, text="Done!")
-                    time.sleep(0.5)
+                        # 2. Filter new concepts
+                        new_concepts = []
+                        for b in b_concepts:
+                            if (concept_a, b) not in existing_pairs:
+                                new_concepts.append(b)
+                                
+                        if not new_concepts:
+                            st.warning("All concepts have already been compared with this subject.")
+                            progress_bar.empty()
+                        else:
+                            # Run Sentiment Analysis
+                            progress_text = "Analyzing sentiment..."
+                            progress_bar.progress(10, text=progress_text)
+                            sentiment_map = backend.batch_sentiment_analysis(new_concepts, gemini_key)
+
+                            progress_text = "Calculating similarity..."
+                            progress_bar.progress(20, text=progress_text)
+                            total = len(new_concepts)
+                            
+                            for idx, single_b in enumerate(new_concepts):
+                                raw_score, _, _ = backend.get_semantic_similarity(concept_a, single_b, gemini_key)
+                                sent = sentiment_map.get(single_b, "Neutral")
+                                
+                                result_entry = {
+                                    "Concept A": concept_a,
+                                    "Concept B": single_b,
+                                    "Timestamp": time.strftime("%H:%M:%S"),
+                                    "Sentiment": sent
+                                }
+                                
+                                if mode == "Free Compare (Weighted)":
+                                    # Use existing scaling
+                                    relevance = backend.calculate_display_score(raw_score)
+                                    result_entry["Relevance"] = relevance
+                                else:
+                                    # Raw Mode
+                                    result_entry["Cosine Similarity"] = raw_score
+                                    
+                                # Append to history
+                                st.session_state['free_compare_history'].append(result_entry)
+                                
+                                # Update progress
+                                p = 20 + int(((idx + 1) / total) * 80)
+                                progress_bar.progress(p, text=f"Processed: {single_b}")
+                                
+                            progress_bar.empty()
+                            st.success(f"Processed {total} new comparisons!")
+
+        # Display History
+        if st.session_state['free_compare_history']:
+            st.divider()
+            
+            # Toolbar
+            t_col1, t_col2 = st.columns([4, 1])
+            with t_col1:
+                st.markdown("##### Comparison History")
+            with t_col2:
+                if st.button("Clear History", key="clear_free_history"):
+                    st.session_state['free_compare_history'] = []
                     st.rerun()
 
-    # --- RESULTS & VISUALIZATION ---
-    st.divider()
-    
-    if st.session_state['semantic_history']:
-        # Prepare Data for Visualization
-        history_df = pd.DataFrame(st.session_state['semantic_history'])
-        
-        # 1. HISTORY TABLE (Shown First)
-        col_res, col_clear = st.columns([4, 1])
-        with col_res:
-            st.markdown("##### History")
-        with col_clear:
-            if st.button("Clear History"):
-                st.session_state['semantic_history'] = []
-                st.rerun()
+            df_history = pd.DataFrame(st.session_state['free_compare_history'])
+            
+            # Remove Timestamp for display
+            df_history = df_history.drop(columns=["Timestamp"], errors="ignore")
 
-        # Display DataEditor (excluding hidden vector column)
-        # Use Relevance for the table
-        display_df = history_df.drop(columns=['_vector', 'Score', 'Raw Score'], errors='ignore')
+            # Sort by Score Descending (Relevance or Cosine Similarity)
+            sort_token = "Relevance" if mode == "Free Compare (Weighted)" else "Cosine Similarity"
+            
+            # Ensure Column Order matches Brand Diagnostics (A, B, Score, Sentiment)
+            desired_order = ["Concept A", "Concept B", sort_token, "Sentiment"]
+            
+            # Reorder if columns exist
+            existing_cols = [c for c in desired_order if c in df_history.columns]
+            df_history = df_history[existing_cols]
 
-        # Sort by Relevance Descending
-        if 'Relevance' in display_df.columns:
-            display_df = display_df.sort_values(by="Relevance", ascending=False)
+            if sort_token in df_history.columns:
+                df_history = df_history.sort_values(by=sort_token, ascending=False)
 
-        # Custom Styling for Sentiment Text
-        def style_sentiment(val):
-            if val == "Positive":
-                return 'color: #2ecc71; font-weight: bold'
-            elif val == "Negative":
-                return 'color: #e74c3c; font-weight: bold'
-            elif val == "Neutral":
-                return 'color: #95a5a6'
-            return ''
-
-        st.dataframe(
-            display_df.style.map(style_sentiment, subset=['Sentiment']),
-            column_config={
-                "Relevance": st.column_config.ProgressColumn(
+            # Columns configuration
+            col_config = {}
+            col_config["Sentiment"] = st.column_config.TextColumn("Sentiment")
+            
+            if mode == "Free Compare (Weighted)":
+                col_config["Relevance"] = st.column_config.ProgressColumn(
                     "Relevance",
                     format="%.1f%%",
                     min_value=0,
                     max_value=100
-                ),
-                "Sentiment": st.column_config.TextColumn("Sentiment")
-            },
-            use_container_width=True,
-            hide_index=True
-        )
-        
-        st.divider()
-
-        # 2. SEMANTIC SPACE CHART (Shown Second)
-        # Filter rows that have vectors
-        valid_history = [row for row in st.session_state['semantic_history'] if row.get('_vector') is not None]
-        
-        if len(valid_history) >= 2:
-            st.markdown("##### 🌌 Semantic Space")
-            
-            valid_vectors = [row['_vector'] for row in valid_history]
-            valid_labels = [row['Statement B'] for row in valid_history]
-            # Ensure we use 'Relevance' for chart consistency
-            valid_scores = [row.get('Relevance', 0) for row in valid_history]
-            valid_sentiments = [row.get('Sentiment', 'Neutral') for row in valid_history]
-            
-            # Reduce Dimensions
-            coords = backend.reduce_dimensions(valid_vectors)
-            
-            if coords:
-                plot_df = pd.DataFrame(coords, columns=['x', 'y'])
-                plot_df['Concept'] = valid_labels
-                plot_df['Relevance'] = valid_scores
-                plot_df['Sentiment'] = valid_sentiments
-                
-                # Define Color Scale
-                domain = ["Positive", "Negative", "Neutral", "Unknown"]
-                range_ = ["#2ecc71", "#e74c3c", "#95a5a6", "#17a2b8"]
-                
-                # Create Base Chart for Points
-                base = alt.Chart(plot_df).encode(
-                    x=alt.X('x', axis=None),
-                    y=alt.Y('y', axis=None)
+                )
+            else:
+                col_config["Cosine Similarity"] = st.column_config.NumberColumn(
+                    "Cosine Similarity",
+                    format="%.4f"
                 )
 
-                points = base.mark_circle().encode(
-                    color=alt.Color('Sentiment', scale=alt.Scale(domain=domain, range=range_)),
-                    size=alt.Size('Relevance', scale=alt.Scale(range=[100, 500]), legend=None),
-                    tooltip=[
-                        alt.Tooltip('Concept', title='Concept'),
-                        alt.Tooltip('Relevance', format='.1f', title='Relevance (%)'),
-                        alt.Tooltip('Sentiment', title='Sentiment')
-                    ]
-                )
-                
-                # Optional: Text Labels (only if < 30 points to avoid clutter)
-                chart_final = points
-                if len(plot_df) < 30:
-                    text = base.mark_text(
-                        align='left',
-                        baseline='middle',
-                        dx=8,
-                        fontSize=10,
-                        color='white'
-                    ).encode(
-                        text='Concept',
-                        color=alt.value('white') # Force white for contrast
-                    )
-                    chart_final = points + text
-                
-                st.altair_chart(chart_final.interactive(), use_container_width=True)
+            # Custom Styling for Sentiment Text (Reused)
+            def style_sentiment(val):
+                if val == "Positive":
+                    return 'color: #2ecc71; font-weight: bold'
+                elif val == "Negative":
+                    return 'color: #e74c3c; font-weight: bold'
+                elif val == "Neutral":
+                    return 'color: #95a5a6'
+                return ''
 
-        elif len(valid_history) > 0:
-            st.info("⚠️ Add more data points (at least 2) to visualize the semantic space.")
-            
-        st.info("""
-        **ℹ️ Methodology Note:** The "Relevance" score is a calibrated metric designed to highlight meaningful differences. 
-        Raw vector similarity scores typically cluster between 0.35 and 0.65 due to the nature of language models. 
-        This tool normalizes that range to a 0–100% scale:
-        - **< 0%**: Semantic noise (irrelevant concepts).
-        - **> 80%**: Strong strategic alignment.
-        Raw cosine similarity is observed in the background logic.
-        """)
+            st.dataframe(
+                df_history.style.map(style_sentiment, subset=['Sentiment']),
+                use_container_width=True,
+                hide_index=True,
+                column_config=col_config
+            )
+
 
 # --- TAB 6: RAG SIMULATION ---
 
