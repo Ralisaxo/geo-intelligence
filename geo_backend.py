@@ -17,6 +17,7 @@ import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import numpy as np
 from sklearn.decomposition import PCA
+from pathlib import Path
 
 DB_FILE = "geo_cache.db"
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
@@ -353,11 +354,9 @@ def run_geo_analysis(df, client, model="gpt-4o"):
     csv_data = top_competitors.to_csv(index=False)
     
     # Load system prompt from file
-    try:
-        with open("prompt.txt", "r") as f:
-            system_prompt = f.read()
-    except FileNotFoundError:
-        system_prompt = "You are a GEO Expert. Compare Saxo Bank to competitors."
+    system_prompt = load_prompt_file("prompts/geo_analysis_system.txt")
+    if "Error:" in system_prompt:
+         system_prompt = "You are a GEO Expert. Compare Saxo Bank to competitors."
     
     try:
         response = client.chat.completions.create(
@@ -410,7 +409,7 @@ def generate_rag_bio(df, company_name, source_mode, client):
     context_json = json.dumps(context_data, indent=2, default=str)
     
     # Load RAG Prompt
-    system_instruction = load_prompt_file("rag_prompt.txt")
+    system_instruction = load_prompt_file("prompts/rag_bio_system.txt")
     
     try:
         response = client.chat.completions.create(
@@ -498,14 +497,23 @@ def batch_sentiment_analysis(phrases, api_key):
     # Use specific version requested
     model = genai.GenerativeModel('gemini-2.5-flash-lite')
     
-    prompt = f"""
-    You are a Brand Reputation Analyst for an investment bank. 
-    Classify the sentiment of the following adjectives strictly as 'Positive', 'Negative', or 'Neutral' in the context of a financial trading platform. 
-    Examples: 'Risky' is Negative. 'Expensive' is Negative. 'Complex' is Negative. 'Robust' is Positive.
-    Input: {json.dumps(phrases)}
-    Output JSON: {{phrase: sentiment}}
-    Do not use markdown formatting. Return raw JSON.
-    """
+    prompt_template = load_prompt_file("prompts/sentiment_analysis.txt")
+    if "Error:" in prompt_template:
+        # Fallback if file missing
+        prompt = f"""
+        You are a Brand Reputation Analyst for an investment bank. 
+        Classify the sentiment of the following adjectives strictly as 'Positive', 'Negative', or 'Neutral' in the context of a financial trading platform. 
+        Input: {json.dumps(phrases)}
+        Output JSON: {{phrase: sentiment}}
+        """
+    else:
+        # Use format to inject the JSON
+        # Note: The text file uses {input_json} as placeholder
+        try:
+             prompt = prompt_template.format(input_json=json.dumps(phrases))
+        except Exception as e:
+             print(f"Error formatting prompt: {e}")
+             return {p: "Neutral" for p in phrases}
     
     try:
         response = model.generate_content(prompt)
@@ -673,7 +681,7 @@ def generate_brand_analysis(prompts_list, models_config, iterations, api_keys, p
                             completion = client.chat.completions.create(
                                 model=model,
                                 messages=[
-                                    {"role": "system", "content": "You are a helpful assistant. Follow constraints strictly."},
+                                    {"role": "system", "content": load_prompt_file("prompts/openai_default_system.txt")},
                                     {"role": "user", "content": prompt}
                                 ],
                                 temperature=1.0,
@@ -1086,3 +1094,268 @@ def process_accuranker_prompts_for_reddit(prompts, tag_filter="Commercial"):
     final_list.sort(key=lambda x: x['count'], reverse=True)
     
     return final_list, matched_prompts
+
+def fetch_accuranker_data(brand_id, tag, api_token):
+    """
+    Fetches prompts from AccuRanker, filters by tag, and prepares verification tasks.
+    Returns: list of task dicts.
+    """
+    if not brand_id or not api_token:
+        return []
+
+    # 1. Fetch Prompts (Reuse logic from raw fetch but tailored for this flow)
+    # We need specific fields: description (Truth), results.prompt_response (AI Answer)
+    url = f"https://app.accuranker.com/api/v4/brands/{brand_id}/prompts/"
+    headers = {
+        "Authorization": f"Token {api_token}",
+        "Accept": "application/json",
+    }
+    
+    params = {
+        "fields": "id,prompt,tags,description,results.created_at,results.prompt_response,results.response_type,results.search_engine,results.sources.title,results.sources.url",
+        "limit": 1000
+    }
+    
+    all_prompts = []
+    
+    try:
+        while url:
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            chunk = []
+            if isinstance(data, list):
+                chunk = data
+                url = None
+            elif isinstance(data, dict):
+                chunk = data.get('results', [])
+                url = data.get('next')
+                if url: params = None
+            
+            all_prompts.extend(chunk)
+            
+            if len(all_prompts) > 5000: # Safety
+                break
+
+    except Exception as e:
+        return [{"error": f"API Error: {e}"}]
+
+    # 2. Filter & Process
+    verified_results = []
+    tag_lower = tag.lower() if tag else None
+    
+    # Pre-process to identify all verification tasks
+    verification_tasks = []
+    supported_engines = ['chatgpt', 'perplexity', 'ai_overview', 'ai_mode']
+    
+    for p in all_prompts:
+        p_tags = [t.lower() for t in p.get('tags', [])]
+        if tag_lower and tag_lower not in p_tags:
+            continue
+            
+        description = p.get('description', '')
+        prompt_text = p.get('prompt', '')
+        
+        # Skip if no truth
+        if not description or not description.strip():
+             # We might want to still return a skipped result for visibility, 
+             # but for now let's just skip processing or handle later?
+             # Let's add a "placeholder" task that marks it as skipped for the first engine 
+             # so the user sees "No Truth"
+             verification_tasks.append({
+                 "type": "skipped",
+                 "prompt": prompt_text,
+                 "truth": description,
+                 "engine": "All"
+             })
+             continue
+
+        results = p.get('results', [])
+        if not results:
+            continue
+
+        # Group by engine
+        engine_results = {e: [] for e in supported_engines}
+        for r in results:
+            se = r.get('search_engine')
+            if se in engine_results:
+                engine_results[se].append(r)
+        
+        # For each engine, find best result
+        for engine, res_list in engine_results.items():
+            if not res_list:
+                continue
+            
+            # Sort by date desc
+            res_list.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+            
+            # Find candidate with response
+            candidate = None
+            for r in res_list:
+                if r.get('prompt_response'):
+                    candidate = r
+                    # Prefer one with sources if available? 
+                    # For now just first with response is good basic check. 
+                    # If we want to be fancy we can also check sources... 
+                    # Let's stick to "latest with response" for robustness
+                    break
+            
+            if candidate:
+                 verification_tasks.append({
+                     "type": "verify",
+                     "prompt": prompt_text,
+                     "truth": description,
+                     "engine": engine,
+                     "result_obj": candidate
+                 })
+
+    total = len(verification_tasks)
+    
+    return verification_tasks
+
+def verify_accuranker_data(tasks, openai_client, progress_callback=None):
+    """
+    Verifies a list of tasks against Ground Truth using OpenAI.
+    """
+    verified_results = []
+    
+    # Load System Prompt
+    try:
+        system_prompt = Path("prompts/llm_truth_check.txt").read_text()
+    except Exception:
+        system_prompt = "You are an expert fact-checker. Verify if the LLM response is consistent with the grounded truth description."
+        
+    total = len(tasks)
+    
+    for idx, task in enumerate(tasks):
+        # Update Progress
+        if progress_callback:
+            progress_callback(idx, total, f"Verifying {idx+1}/{total} ({task.get('engine')}): {task.get('prompt')}")
+        
+        if task["type"] == "skipped":
+            verified_results.append({
+                "Prompt": task["prompt"],
+                "Truth": task["truth"],
+                "Engine": task["engine"],
+                "Verdict": "Skipped",
+                "Reason": "No truth defined",
+                "Score": 0,
+                "Status": "No Truth",
+                "AI Response": "", 
+                "Sources": [],
+                "Source Count": 0
+            })
+            continue
+            
+        # Process Verification
+        engine = task["engine"]
+        res = task["result_obj"]
+        
+        ai_response = res.get('prompt_response')
+        sources = res.get('sources', [])
+        
+        clean_sources = []
+        for s in sources:
+            url = s.get('url', '').strip()
+            if not url:
+                continue
+            clean_sources.append({"URL": url})
+
+        row = {
+            "Prompt": task["prompt"],
+            "Truth": task["truth"],
+            "Engine": engine,
+            "AI Response": ai_response,
+            "Sources": clean_sources,
+            "Source Count": len(clean_sources),
+            "Verdict": "Pending",
+            "Reason": "",
+            "Score": 0,
+            "Status": "Processed"
+        }
+        
+        try:
+            user_msg = f"Ground Truth: {task['truth']}\n\nLLM Response: {ai_response}"
+            
+            completion = openai_client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg}
+                ],
+                response_format={"type": "json_object"}
+            )
+            
+            content = completion.choices[0].message.content
+            # Handle potential JSON errors
+            try:
+                analysis = json.loads(content)
+                row["Verdict"] = analysis.get("verdict", "Unknown")
+                row["Reason"] = analysis.get("reason", "No reason provided")
+                row["Score"] = analysis.get("score", 0)
+            except json.JSONDecodeError:
+                row["Verdict"] = "Error"
+                row["Reason"] = f"Failed to parse JSON response: {content}"
+                row["Score"] = 0
+            
+        except Exception as e:
+            row["Verdict"] = "Error"
+            row["Reason"] = str(e)
+            
+        verified_results.append(row)
+        
+    return verified_results
+
+def fetch_unique_tags(brand_id, api_token):
+    """
+    Fetches all unique tags used in prompts for a specific brand.
+    """
+    if not brand_id or not api_token:
+        return []
+
+    url = f"https://app.accuranker.com/api/v4/brands/{brand_id}/prompts/"
+    headers = {
+        "Authorization": f"Token {api_token}",
+        "Accept": "application/json",
+    }
+    
+    # We only need the tags field
+    params = {
+        "fields": "tags",
+        "limit": 1000
+    }
+    
+    unique_tags = {} # tag: count
+    
+    try:
+        while url:
+            # Short timeout for tag fetching
+            response = requests.get(url, headers=headers, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            
+            chunk = []
+            if isinstance(data, list):
+                chunk = data
+                url = None
+            elif isinstance(data, dict):
+                chunk = data.get('results', [])
+                url = data.get('next')
+                if url: params = None
+            
+            for item in chunk:
+                tags = item.get('tags', [])
+                if tags:
+                    for t in tags:
+                        unique_tags[t] = unique_tags.get(t, 0) + 1
+            
+            if len(unique_tags) > 1000: # Safety
+                break
+
+    except Exception as e:
+        print(f"Error fetching tags: {e}")
+        return {}
+        
+    return unique_tags
+

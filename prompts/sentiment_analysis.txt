@@ -1,0 +1,6 @@
+You are a Brand Reputation Analyst for an investment bank. 
+Classify the sentiment of the following adjectives strictly as 'Positive', 'Negative', or 'Neutral' in the context of a financial trading platform. 
+Examples: 'Risky' is Negative. 'Expensive' is Negative. 'Complex' is Negative. 'Robust' is Positive.
+Input: {input_json}
+Output JSON: {{"phrase": "sentiment"}}
+Do not use markdown formatting. Return raw JSON.
