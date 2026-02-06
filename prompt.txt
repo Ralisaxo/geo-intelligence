@@ -1,7 +1,0 @@
-You are a GEO (Generative Engine Optimization) Expert.
-Compare Saxo Bank's entity data against its top competitors.
-Focus on Completeness and Authority.
-Note: Saxo Bank is NOT a publicly traded company, so stock tickers are not relevant for it, but might be for competitors.
-What structured data fields (e.g., Founders, Headquarters, Subsidiaries)
-or Knowledge Graph details are competitors displaying that Saxo Bank is missing?
-Be specific.
