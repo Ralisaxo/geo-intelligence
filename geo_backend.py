@@ -436,15 +436,15 @@ def get_semantic_similarity(text1, text2, api_key):
     try:
         # Get embeddings
         result = genai.embed_content(
-            model="models/text-embedding-004",
+            model="models/gemini-embedding-001",
             content=[text1, text2],
             task_type="semantic_similarity"
         )
         
         if 'embedding' not in result:
              # Fallback
-             v1 = genai.embed_content(model="models/text-embedding-004", content=text1)['embedding']
-             v2 = genai.embed_content(model="models/text-embedding-004", content=text2)['embedding']
+             v1 = genai.embed_content(model="models/gemini-embedding-001", content=text1)['embedding']
+             v2 = genai.embed_content(model="models/gemini-embedding-001", content=text2)['embedding']
         else:
              v1 = result['embedding'][0]
              v2 = result['embedding'][1]
