@@ -2,7 +2,7 @@ streamlit
 pandas
 requests
 openai
-google-generativeai>=0.7.0
+google-genai
 wordcloud
 matplotlib
 scikit-learn

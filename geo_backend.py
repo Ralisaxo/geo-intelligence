@@ -13,8 +13,8 @@ import io
 from collections import Counter
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud, STOPWORDS
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from google import genai
+from google.genai import types
 import numpy as np
 from sklearn.decomposition import PCA
 from pathlib import Path
@@ -431,23 +431,38 @@ def get_semantic_similarity(text1, text2, api_key):
     if not api_key:
         return 0.0, None, None
 
-    genai.configure(api_key=api_key)
+    client = genai.Client(api_key=api_key)
     
     try:
         # Get embeddings
-        result = genai.embed_content(
+        # New SDK returns an object with .embeddings attribute which is a list
+        response = client.models.embed_content(
             model="models/gemini-embedding-001",
-            content=[text1, text2],
-            task_type="semantic_similarity"
+            contents=[text1, text2],
+            config=types.EmbedContentConfig(
+                task_type="SEMANTIC_SIMILARITY"
+            )
         )
         
-        if 'embedding' not in result:
-             # Fallback
-             v1 = genai.embed_content(model="models/gemini-embedding-001", content=text1)['embedding']
-             v2 = genai.embed_content(model="models/gemini-embedding-001", content=text2)['embedding']
+        # Accessing embeddings from the response
+        # Accessing embeddings from the response
+        if not response.embeddings or len(response.embeddings) < 2:
+             # Fallback if batch fails for some reason or returns fewer
+             v1_resp = client.models.embed_content(
+                 model="models/gemini-embedding-001", 
+                 contents=text1,
+                 config=types.EmbedContentConfig(task_type="SEMANTIC_SIMILARITY")
+             )
+             v2_resp = client.models.embed_content(
+                 model="models/gemini-embedding-001", 
+                 contents=text2,
+                 config=types.EmbedContentConfig(task_type="SEMANTIC_SIMILARITY")
+             )
+             v1 = v1_resp.embeddings[0].values
+             v2 = v2_resp.embeddings[0].values
         else:
-             v1 = result['embedding'][0]
-             v2 = result['embedding'][1]
+             v1 = response.embeddings[0].values
+             v2 = response.embeddings[1].values
 
         # Convert to numpy arrays
         vec1 = np.array(v1)
@@ -474,8 +489,9 @@ def calculate_display_score(raw_score):
     Normalizes raw cosine similarity (typically 0.35-0.65) to a 0-100% human-readable scale.
     """
     # Anchor points based on data analysis
-    min_anchor = 0.78  # Scores below this become 0%
-    max_anchor = 0.88  # Scores above this become 100%
+    # Anchor points based on data analysis
+    min_anchor = 0.81  # Scores below this become 0%
+    max_anchor = 0.89  # Scores above this become 100%
 
     # Linear normalization
     if raw_score <= min_anchor:
@@ -493,9 +509,9 @@ def batch_sentiment_analysis(phrases, api_key):
     if not phrases or not api_key:
         return {}
 
-    genai.configure(api_key=api_key)
+    client = genai.Client(api_key=api_key)
     # Use specific version requested
-    model = genai.GenerativeModel('gemini-2.5-flash-lite')
+    model_name = 'gemini-2.5-flash-lite' 
     
     prompt_template = load_prompt_file("prompts/sentiment_analysis.txt")
     if "Error:" in prompt_template:
@@ -516,7 +532,10 @@ def batch_sentiment_analysis(phrases, api_key):
              return {p: "Neutral" for p in phrases}
     
     try:
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt
+        )
         text = response.text.strip()
         # Clean potential markdown
         if text.startswith("```json"):
@@ -525,9 +544,11 @@ def batch_sentiment_analysis(phrases, api_key):
             text = text[:-3]
         
         # LOGGING FOR DEBUGGING
-        with open("sentiment_debug.txt", "w", encoding="utf-8") as f:
-            f.write(f"Prompt Input: {json.dumps(phrases)}\n")
-            f.write(f"Raw Response: {text}\n")
+        try:
+            with open("sentiment_debug.txt", "w", encoding="utf-8") as f:
+                f.write(f"Prompt Input: {json.dumps(phrases)}\n")
+                f.write(f"Raw Response: {text}\n")
+        except: pass
 
         try:
             raw_result = json.loads(text)
@@ -704,16 +725,36 @@ def generate_brand_analysis(prompts_list, models_config, iterations, api_keys, p
 
     # --- Gemini Loop ---
     if gemini_key and selected_gemini_models:
-        genai.configure(api_key=gemini_key)
-        safety_settings = {
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        }
+        client = genai.Client(api_key=gemini_key)
+        
+        # New SDK Safety Settings
+        # They are passed as part of GenerateContentConfig
+        # https://github.com/googleapis/python-genai
+        
+        # Mapping HarmCategory to new types if needed, but the types are available in google.genai.types
+        # Actually in new SDK, it is cleaner.
+        
+        safety_settings = [
+            types.SafetySetting(
+                category=types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                threshold=types.HarmBlockThreshold.BLOCK_NONE
+            ),
+            types.SafetySetting(
+                category=types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                threshold=types.HarmBlockThreshold.BLOCK_NONE
+            ),
+            types.SafetySetting(
+                category=types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                threshold=types.HarmBlockThreshold.BLOCK_NONE
+            ),
+            types.SafetySetting(
+                category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                threshold=types.HarmBlockThreshold.BLOCK_NONE
+            ),
+        ]
         
         for model_name in selected_gemini_models:
-            model_instance = genai.GenerativeModel(model_name)
+            # model_instance = genai.GenerativeModel(model_name) # OLD
             for prompt in prompts_list:
                 if progress_callback:
                     progress_callback(min(step_count / total_steps, 1.0), f"Running Gemini {model_name}: {prompt[:40]}...")
@@ -726,17 +767,24 @@ def generate_brand_analysis(prompts_list, models_config, iterations, api_keys, p
                 responses = []
                 for i in range(iterations):
                     try:
-                        response = model_instance.generate_content(
-                            prompt,
-                            generation_config=genai.types.GenerationConfig(
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
                                 candidate_count=1,
                                 max_output_tokens=100,
-                                temperature=1.0
-                            ),
-                            safety_settings=safety_settings
+                                temperature=1.0,
+                                safety_settings=safety_settings
+                            )
                         )
+                        # New response structure
                         if response.candidates and response.candidates[0].content.parts:
                              responses.append(response.candidates[0].content.parts[0].text.strip())
+                        elif response.text:
+                             responses.append(response.text.strip())
+                        else:
+                             responses.append("")
+
                     except Exception as e:
                         responses.append(f"Error: {str(e)}")
                         time.sleep(1)
