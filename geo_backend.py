@@ -474,8 +474,8 @@ def calculate_display_score(raw_score):
     Normalizes raw cosine similarity (typically 0.35-0.65) to a 0-100% human-readable scale.
     """
     # Anchor points based on data analysis
-    min_anchor = 0.32  # Scores below this become 0%
-    max_anchor = 0.70  # Scores above this become 100%
+    min_anchor = 0.78  # Scores below this become 0%
+    max_anchor = 0.88  # Scores above this become 100%
 
     # Linear normalization
     if raw_score <= min_anchor:
