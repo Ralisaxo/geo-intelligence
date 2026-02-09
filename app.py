@@ -583,6 +583,12 @@ elif current_page == "Semantic Triples":
                                 total = len(concepts)
                                 for idx, concept in enumerate(concepts):
                                     raw_score, v1, v2 = backend.get_semantic_similarity(statement_a, concept, gemini_key)
+                                    
+                                    # Error Handling: If v2 is a string, it's an error message
+                                    if isinstance(v2, str):
+                                        st.error(f"Backend Error for '{concept}': {v2}")
+                                        raw_score = 0.0
+                                    
                                     relevance = backend.calculate_display_score(raw_score)
 
                                     # Use mapped sentiment or default to Neutral if API fails

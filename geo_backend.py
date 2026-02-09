@@ -467,7 +467,7 @@ def get_semantic_similarity(text1, text2, api_key):
 
     except Exception as e:
         print(f"Error in semantic similarity: {e}")
-        return 0.0, None, None
+        return 0.0, None, str(e)
 
 def calculate_display_score(raw_score):
     """
