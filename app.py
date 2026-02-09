@@ -474,7 +474,7 @@ elif current_page == "Semantic Triples":
             # Mode Selector
             mode = st.radio(
                 "Select Analysis Mode", 
-                ["Brand Diagnostics", "Free Compare (Weighted)", "Free Compare (Raw)"], 
+                ["Brand Diagnostics", "Free Compare (Weighted)"], 
                 horizontal=True,
                 label_visibility="collapsed"
             )
@@ -812,13 +812,12 @@ elif current_page == "Semantic Triples":
                                             "Sentiment": sent
                                         }
 
-                                        if mode == "Free Compare (Weighted)":
-                                            # Use existing scaling
-                                            relevance = backend.calculate_display_score(raw_score)
-                                            result_entry["Relevance"] = relevance
-                                        else:
-                                            # Raw Mode
-                                            result_entry["Cosine Similarity"] = raw_score
+                                        # Always calculate weighted relevance
+                                        relevance = backend.calculate_display_score(raw_score)
+                                        result_entry["Relevance"] = relevance
+                                        
+                                        # Always include raw score
+                                        result_entry["Cosine Similarity"] = raw_score
 
                                         # Append to history
                                         st.session_state['free_compare_history'].append(result_entry)
@@ -848,11 +847,11 @@ elif current_page == "Semantic Triples":
                     # Remove Timestamp for display
                     df_history = df_history.drop(columns=["Timestamp"], errors="ignore")
 
-                    # Sort by Score Descending (Relevance or Cosine Similarity)
-                    sort_token = "Relevance" if mode == "Free Compare (Weighted)" else "Cosine Similarity"
+                    # Sort by Relevance Descending
+                    sort_token = "Relevance"
 
                     # Ensure Column Order matches Brand Diagnostics (A, B, Score, Sentiment)
-                    desired_order = ["Concept A", "Concept B", sort_token, "Sentiment"]
+                    desired_order = ["Concept A", "Concept B", "Relevance", "Cosine Similarity", "Sentiment"]
 
                     # Reorder if columns exist
                     existing_cols = [c for c in desired_order if c in df_history.columns]
@@ -865,18 +864,17 @@ elif current_page == "Semantic Triples":
                     col_config = {}
                     col_config["Sentiment"] = st.column_config.TextColumn("Sentiment")
 
-                    if mode == "Free Compare (Weighted)":
-                        col_config["Relevance"] = st.column_config.ProgressColumn(
-                            "Relevance",
-                            format="%.1f%%",
-                            min_value=0,
-                            max_value=100
-                        )
-                    else:
-                        col_config["Cosine Similarity"] = st.column_config.NumberColumn(
-                            "Cosine Similarity",
-                            format="%.4f"
-                        )
+                    col_config["Relevance"] = st.column_config.ProgressColumn(
+                        "Relevance",
+                        format="%.1f%%",
+                        min_value=0,
+                        max_value=100
+                    )
+                    
+                    col_config["Cosine Similarity"] = st.column_config.NumberColumn(
+                        "Raw Score",
+                        format="%.4f"
+                    )
 
                     # Custom Styling for Sentiment Text (Reused)
                     def style_sentiment(val):
