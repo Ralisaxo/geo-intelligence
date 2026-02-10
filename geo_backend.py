@@ -1059,7 +1059,7 @@ def process_accuranker_prompts_for_reddit(prompts, tag_filter="Commercial"):
     
     for p in prompts:
         # 1. Filter by Tag
-        tags = p.get('tags', [])
+        tags = p.get('tags') or []
         tags_lower = [t.lower() for t in tags]
         
         # If tag_filter is provided, check strict membership
@@ -1198,7 +1198,7 @@ def fetch_accuranker_data(brand_id, tag, api_token):
     supported_engines = ['chatgpt', 'perplexity', 'ai_overview', 'ai_mode']
     
     for p in all_prompts:
-        p_tags = [t.lower() for t in p.get('tags', [])]
+        p_tags = [t.lower() for t in (p.get('tags') or [])]
         if tag_lower and tag_lower not in p_tags:
             continue
             
@@ -1393,7 +1393,7 @@ def fetch_unique_tags(brand_id, api_token):
                 if url: params = None
             
             for item in chunk:
-                tags = item.get('tags', [])
+                tags = item.get('tags') or []
                 if tags:
                     for t in tags:
                         unique_tags[t] = unique_tags.get(t, 0) + 1
