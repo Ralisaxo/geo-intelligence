@@ -1102,7 +1102,8 @@ elif current_page == "Reddit Analysis":
                     st.caption(f"Estimated Analysis Cost: ~${cost:.3f} ({count} threads)")
 
                 if st.button("Analyze Threads", type="primary"):
-                    urls_to_analyze = [url.strip() for url in reddit_urls.split('\n') if url.strip()]
+                    raw_urls = [url.strip() for url in reddit_urls.split('\n') if url.strip()]
+                    urls_to_analyze = [{"url": u, "cited_pct": None} for u in raw_urls]
 
             # -------------------------------------------------------------------------
             # MODE B: SEARCH REDDIT
@@ -1145,7 +1146,7 @@ elif current_page == "Reddit Analysis":
                                 if not found_urls:
                                     st.warning("No threads found matching criteria.")
                                 else:
-                                    urls_to_analyze = found_urls
+                                    urls_to_analyze = [{"url": u, "cited_pct": None} for u in found_urls]
                                     st.success(f"Found {len(found_urls)} threads. Starting analysis...")
                                     time.sleep(1)
 
@@ -1342,7 +1343,10 @@ elif current_page == "Reddit Analysis":
                              if count_selected > 0:
                                  btn_text = f"Analyze {count_selected} out of {total_rows} Reddit threads"
                                  if st.button(btn_text, type="primary"):
-                                     urls_to_analyze = selected_rows["URL"].tolist()
+                                     # Create list of dicts with URL and Cited %
+                                     subset = selected_rows[["URL", "Cited %"]].copy()
+                                     subset.rename(columns={"URL": "url", "Cited %": "cited_pct"}, inplace=True)
+                                     urls_to_analyze = subset.to_dict('records')
                              else:
                                  if st.button(f"Analyze 0 out of {total_rows} Reddit threads", type="primary"):
                                      st.warning("Please tick off at least one thread to analyze.")
@@ -1382,8 +1386,11 @@ elif current_page == "Reddit Analysis":
                         progress_bar = st.progress(0, text="Initializing...")
                         results = []
 
-                        total = len(urls)
-                        for idx, url in enumerate(urls):
+                        total = len(urls_to_analyze)
+                        for idx, item in enumerate(urls_to_analyze):
+                            url = item['url']
+                            cited_pct = item.get('cited_pct')
+                            
                             progress_bar.progress((idx) / total, text=f"Fetching thread {idx+1}/{total}...")
 
                             # 1. Fetch
@@ -1394,7 +1401,10 @@ elif current_page == "Reddit Analysis":
                                     "Sentiment": "Error",
                                     "Title": "Error fetching data",
                                     "Summary": data["error"],
-                                    "Link": url
+                                    "Link": url,
+                                    "Upvotes": 0,
+                                    "Comments": 0,
+                                    "Cited %": 0
                                 })
                             else:
                                 # 2. Analyze
@@ -1406,7 +1416,10 @@ elif current_page == "Reddit Analysis":
                                     "Subreddit": data.get("subreddit", "Unknown"),
                                     "Title": data["title"],
                                     "Summary": analysis.get("summary", "No summary generated."),
-                                    "Link": url
+                                    "Link": url,
+                                    "Upvotes": data.get("score", 0),
+                                    "Comments": data.get("num_comments", 0),
+                                    "Cited %": cited_pct if cited_pct is not None else 0
                                 })
 
                         progress_bar.progress(1.0, text="Analysis Complete!")
@@ -1415,11 +1428,36 @@ elif current_page == "Reddit Analysis":
             # Display Results
             if 'reddit_results' in st.session_state:
                 st.divider()
+                
+                # --- Sorting Controls ---
+                col_sort1, col_sort2 = st.columns([1, 3])
+                
+                with col_sort1:
+                    # Determine Default Sort
+                    default_sort_idx = 1 # Comments
+                    if input_method == "AccuLLM Sources":
+                        default_sort_idx = 2 # Cited %
 
-                # View Toggle
-                view_mode = st.radio("Display Mode", ["Feed View", "Table View"], horizontal=True)
+                    sort_option = st.selectbox(
+                        "Sort Results By", 
+                        ["Upvotes", "Comments", "Cited %", "Sentiment"],
+                        index=default_sort_idx
+                    )
+                
+                with col_sort2:
+                    view_mode = st.radio("Display Mode", ["Feed View", "Table View"], horizontal=True)
 
                 df_results = st.session_state['reddit_results']
+                
+                # Apply Sorting
+                if sort_option == "Upvotes":
+                    df_results = df_results.sort_values(by="Upvotes", ascending=False)
+                elif sort_option == "Comments":
+                    df_results = df_results.sort_values(by="Comments", ascending=False)
+                elif sort_option == "Cited %":
+                    df_results = df_results.sort_values(by="Cited %", ascending=False)
+                elif sort_option == "Sentiment":
+                    df_results = df_results.sort_values(by="Sentiment")
 
                 if view_mode == "Table View":
                     def color_sentiment(val):
@@ -1439,7 +1477,10 @@ elif current_page == "Reddit Analysis":
                         column_config={
                             "Subreddit": st.column_config.TextColumn("Subreddit", width="small"),
                             "Link": st.column_config.LinkColumn("Thread URL", display_text="Open Thread"),
-                            "Summary": st.column_config.TextColumn("AI Summary", width="large")
+                            "Summary": st.column_config.TextColumn("AI Summary", width="large"),
+                            "Upvotes": st.column_config.NumberColumn("⬆️ Upvotes"),
+                            "Comments": st.column_config.NumberColumn("💬 Comments"),
+                            "Cited %": st.column_config.NumberColumn("🔗 Cited %", format="%.1f%%")
                         },
                         use_container_width=True,
                         hide_index=True
@@ -1469,7 +1510,16 @@ elif current_page == "Reddit Analysis":
                         with st.container(border=True):
                             # Custom Header
                             st.markdown(f"##### {icon} <span style='color:{header_color}'>r/{row['Subreddit']}: {row['Title']}</span>", unsafe_allow_html=True)
-                            st.caption(f"Sentiment: **{sentiment}**")
+                            
+                            # Metadata Line
+                            meta_parts = [f"**{sentiment}**"]
+                            meta_parts.append(f"⬆️ {row.get('Upvotes', 0)}")
+                            meta_parts.append(f"💬 {row.get('Comments', 0)}")
+                            
+                            if row.get('Cited %', 0) > 0:
+                                meta_parts.append(f"🔗 Cited in {row['Cited %']:.1f}%")
+                                
+                            st.caption("  |  ".join(meta_parts))
 
                             # Full Body
                             st.markdown(row['Summary'])

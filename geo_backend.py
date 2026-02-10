@@ -905,6 +905,8 @@ def fetch_reddit_data(url, reddit_client):
             "subreddit": submission.subreddit.display_name,
             "url": url,
             "context": full_context,
+            "score": submission.score,
+            "num_comments": submission.num_comments,
             "error": None
         }
     except Exception as e:
