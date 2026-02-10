@@ -1151,7 +1151,10 @@ elif current_page == "Reddit Analysis":
 
             # Load & Render
             if not st.session_state.reddit_data:
-                 st.info("👈 Enter a URL or Search Query to start.")
+                 if input_method == "AccuLLM Sources":
+                     st.info("👈 Select a brand / market to start.")
+                 else:
+                     st.info("👈 Enter a URL or Search Query to start.")
             else:
                  # Ensure result is a list
                  data_to_show = st.session_state.reddit_data
