@@ -346,8 +346,8 @@ if current_page == "Overview":
                         "KG_Image_URL": st.column_config.ImageColumn("Visual", width="small"),
                         "Source_Authority_Score": st.column_config.ProgressColumn("Auth Score", min_value=0, max_value=3, format="%.2f"),
                         "qid": None # Hide QID in summary
-                    },
-                    use_container_width=True
+                    }, # Use stretch instead of use_container_width
+                    width="stretch"
                 )
             else:
                 st.info("👈 Please select competitors and click 'Load from Cache' or 'Fetch Data' to view the dashboard.")
@@ -380,7 +380,7 @@ elif current_page == "Knowledge Management":
                                 "Total_Claims": st.column_config.NumberColumn("Claims"),
                                 "Total_References": st.column_config.NumberColumn("Refs"),
                             },
-                            use_container_width=True,
+                            width="stretch",
                             height=600
                         )
             else:
@@ -426,7 +426,7 @@ elif current_page == "Knowledge Management":
                         "KG_Image_URL": st.column_config.ImageColumn("Visual", width="small"),
                         "label_en": "Company"
                     },
-                    use_container_width=True,
+                    width="stretch",
                     height=600
                 )
             else:
@@ -662,7 +662,7 @@ elif current_page == "Semantic Triples":
                             ),
                             "Sentiment": st.column_config.TextColumn("Sentiment")
                         },
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
 
@@ -1317,6 +1317,10 @@ elif current_page == "Reddit Analysis":
                      # Create a container for the button ABOVE the table
                      toggles_container = st.container()
 
+                     # Initialize dynamic key for data editor reset
+                     if 'editor_key' not in st.session_state:
+                         st.session_state['editor_key'] = 0
+
                      edited_df = st.data_editor(
                          st.session_state['accuranker_data'],
                          column_config={
@@ -1326,9 +1330,9 @@ elif current_page == "Reddit Analysis":
                              "Cited %": st.column_config.NumberColumn("Cited %", format="%.1f%%", help="Percentage of commercial prompts citing this thread"),
                              "URL": st.column_config.LinkColumn("Thread URL", width="large")
                          },
-                         use_container_width=True,
+                         width="stretch",
                          hide_index=True,
-                         key="accuranker_table"
+                         key=f"accuranker_table_{st.session_state['editor_key']}"
                      )
                      
                      # Sync edits back to session state to preserve manual changes
@@ -1359,11 +1363,13 @@ elif current_page == "Reddit Analysis":
                          with col2:
                              if st.button("Select All", use_container_width=True):
                                  st.session_state['accuranker_data'].loc[:, 'Select'] = True
+                                 st.session_state['editor_key'] += 1
                                  st.rerun()
 
                          with col3:
                              if st.button("Deselect All", use_container_width=True):
                                  st.session_state['accuranker_data'].loc[:, 'Select'] = False
+                                 st.session_state['editor_key'] += 1
                                  st.rerun()
 
                      with st.expander("Debug: Raw API Response", expanded=False):
@@ -1487,7 +1493,7 @@ elif current_page == "Reddit Analysis":
                             "Comments": st.column_config.NumberColumn("💬 Comments"),
                             "Cited %": st.column_config.NumberColumn("🔗 Cited %", format="%.1f%%")
                         },
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
 
@@ -1646,10 +1652,12 @@ elif current_page == "LLM Monitoring":
             with c_sel1:
                 if st.button("Select All", use_container_width=True):
                     st.session_state.selection_df["Select"] = True
+                    st.session_state['verification_key'] = st.session_state.get('verification_key', 0) + 1
                     st.rerun()
             with c_sel2:
                 if st.button("Unselect All", use_container_width=True):
                     st.session_state.selection_df["Select"] = False
+                    st.session_state['verification_key'] = st.session_state.get('verification_key', 0) + 1
                     st.rerun()
 
             # Editor
@@ -1679,8 +1687,8 @@ elif current_page == "LLM Monitoring":
                 },
                 disabled=["Prompt", "Engine", "Truth Defined?"],
                 hide_index=True,
-                use_container_width=True,
-                key="prompt_selector" # Unique key
+                width="stretch",
+                key=f"prompt_selector_{st.session_state.get('verification_key', 0)}" # Unique key
             )
             
             # Sync edits back to session state so they persist across reruns
@@ -1900,7 +1908,7 @@ elif current_page == "LLM Monitoring":
                                 source_count = item.get('Source Count', 0)
                                 if sources:
                                      with st.expander(f"Source URLs ({source_count})", expanded=False):
-                                         st.dataframe(sources, hide_index=True, use_container_width=True)
+                                         st.dataframe(sources, hide_index=True, width="stretch")
         
                                 # Analysis Footer (Always visible)
                                 if item.get('Reason'):
