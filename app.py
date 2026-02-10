@@ -1327,8 +1327,13 @@ elif current_page == "Reddit Analysis":
                              "URL": st.column_config.LinkColumn("Thread URL", width="large")
                          },
                          use_container_width=True,
-                         hide_index=True
+                         hide_index=True,
+                         key="accuranker_table"
                      )
+                     
+                     # Sync edits back to session state to preserve manual changes
+                     # This ensures that if we do something else, we don't lose manual checks
+                     st.session_state['accuranker_data'] = edited_df
 
                      # Calculate statistics for the button dynamically
                      selected_rows = edited_df[edited_df["Select"] == True]
@@ -1353,12 +1358,12 @@ elif current_page == "Reddit Analysis":
 
                          with col2:
                              if st.button("Select All", use_container_width=True):
-                                 st.session_state['accuranker_data']['Select'] = True
+                                 st.session_state['accuranker_data'].loc[:, 'Select'] = True
                                  st.rerun()
 
                          with col3:
                              if st.button("Deselect All", use_container_width=True):
-                                 st.session_state['accuranker_data']['Select'] = False
+                                 st.session_state['accuranker_data'].loc[:, 'Select'] = False
                                  st.rerun()
 
                      with st.expander("Debug: Raw API Response", expanded=False):
