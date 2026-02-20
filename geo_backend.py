@@ -370,6 +370,25 @@ def run_geo_analysis(df, client, model="gpt-4o"):
     except Exception as e:
         return f"Error running AI analysis: {e}"
 
+def run_flexsheet_prompt(prompt_text, client, model="gpt-4o", is_json=False):
+    """
+    Executes a synthesized prompt for AI FlexSheet without a system prompt.
+    """
+    try:
+        kwargs = {
+            "model": model,
+            "messages": [
+                {"role": "user", "content": prompt_text}
+            ]
+        }
+        if is_json:
+            kwargs["response_format"] = {"type": "json_object"}
+            
+        response = client.chat.completions.create(**kwargs)
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Error: {e}"
+
 def load_prompt_file(filename):
     """Safely load a text file content."""
     try:

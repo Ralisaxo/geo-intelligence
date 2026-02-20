@@ -5,6 +5,8 @@ from openai import OpenAI
 import altair as alt
 import geo_backend as backend
 import auth
+import tiktoken
+import json
 
 # -----------------------------------------------------------------------------
 # AUTHENTICATION
@@ -94,7 +96,8 @@ st.markdown("### Authority Gap & Brand Intelligence Dashboard")
 # SIDEBAR
 # -----------------------------------------------------------------------------
 st.sidebar.title("Saxo GEO Tool")
-current_page = st.sidebar.radio("Navigation", ["Overview", "Knowledge Management", "Semantic Triples", "Reddit Analysis", "LLM Monitoring"])
+st.sidebar.header("🧭 Navigation")
+current_page = st.sidebar.radio("Navigation", ["Overview", "Knowledge Management", "Semantic Triples", "Reddit Analysis", "LLM Monitoring", "AI Powered Tools"], label_visibility="collapsed")
 st.sidebar.markdown("---")
 st.sidebar.header("🕹️ Controls")
 
@@ -1913,3 +1916,239 @@ elif current_page == "LLM Monitoring":
                                 # Analysis Footer (Always visible)
                                 if item.get('Reason'):
                                      st.markdown(f"**Analysis:** {item.get('Reason')}")
+
+# --- PAGE: AI POWERED TOOLS ---
+elif current_page == "AI Powered Tools":
+    st.markdown("## 🤖 AI Powered Tools")
+    tabs = st.tabs(["AI FlexSheet"])
+    
+    with tabs[0]:
+        col_title, col_clear = st.columns([0.8, 0.2])
+        with col_title:
+            st.markdown("#### 📓 AI FlexSheet")
+        with col_clear:
+            if st.button("🧹 Clear All", use_container_width=True):
+                # Clear everything related to flexsheet
+                for key in list(st.session_state.keys()):
+                    if "flex" in key:
+                        del st.session_state[key]
+                st.rerun()
+
+        st.info("Upload your spreadsheet, map columns to variables, and process your dataset row by row using an AI prompt.")
+        
+        uploaded_file = st.file_uploader("Upload Data", type=["csv", "xlsx"], key="flex_uploader")
+        if uploaded_file is not None:
+            # Read file
+            try:
+                if uploaded_file.name.endswith('.csv'):
+                    try:
+                        df_flex = pd.read_csv(uploaded_file, encoding='utf-8', sep=None, engine='python', on_bad_lines='skip')
+                    except UnicodeDecodeError:
+                        uploaded_file.seek(0)
+                        try:
+                            df_flex = pd.read_csv(uploaded_file, encoding='utf-16', sep=None, engine='python', on_bad_lines='skip')
+                        except UnicodeDecodeError:
+                            uploaded_file.seek(0)
+                            df_flex = pd.read_csv(uploaded_file, encoding='latin1', sep=None, engine='python', on_bad_lines='skip')
+                else:
+                    df_flex = pd.read_excel(uploaded_file)
+            except Exception as e:
+                st.error(f"Error reading file: {e}")
+                df_flex = None
+                
+            if df_flex is not None and not df_flex.empty:
+                st.success(f"✅ Successfully loaded dataset with **{len(df_flex)}** total rows.")
+                st.markdown("**Data Preview (first 5 rows)**")
+                st.dataframe(df_flex.head(5))
+                
+                # Setup controls
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    selected_cols = st.multiselect("Select Columns to use as variables", options=df_flex.columns)
+                with col2:
+                    model_options = ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-5-mini", "gpt-5.2"]
+                    selected_model = st.selectbox("Select OpenAI Model", model_options, index=0)
+                    
+                # Prompts management
+                try:
+                    with open("prompts/flexsheet_prompts.json", "r") as f:
+                        flex_prompts_data = json.load(f)
+                except FileNotFoundError:
+                    flex_prompts_data = []
+                    
+                prompt_titles = [p.get("title", "Untitled") for p in flex_prompts_data]
+                prompt_titles.insert(0, "Custom Prompt")
+                
+                selected_prompt_title = st.selectbox("Predefined Prompts", prompt_titles)
+                
+                default_prompt_text = ""
+                output_format = "text"
+                output_columns = []
+                if selected_prompt_title != "Custom Prompt":
+                    for p in flex_prompts_data:
+                        if p.get("title") == selected_prompt_title:
+                            default_prompt_text = p.get("prompt", "")
+                            output_format = p.get("output_format", "text")
+                            output_columns = p.get("output_columns", [])
+                            break
+                            
+                if "last_prompt_title" not in st.session_state:
+                    st.session_state.last_prompt_title = selected_prompt_title
+
+                if selected_prompt_title != st.session_state.last_prompt_title:
+                    st.session_state.flex_prompt = default_prompt_text
+                    st.session_state.last_prompt_title = selected_prompt_title
+                elif "flex_prompt" not in st.session_state:
+                    st.session_state.flex_prompt = default_prompt_text
+                    
+                if selected_cols:
+                    st.markdown("**Insert Variables:**")
+                    # Display buttons in rows of 4, keeping them reasonably sized
+                    for i in range(0, len(selected_cols), 4):
+                        chunk = selected_cols[i:i+4]
+                        # Create 4 columns, plus a 5th spacer column to push them left if there aren't 4 items
+                        cols = st.columns(4)
+                        for j, col_name in enumerate(chunk):
+                            if cols[j].button(f"➕ [{col_name}]", key=f"btn_var_{col_name}_{i}_{j}", use_container_width=True):
+                                st.session_state.flex_prompt += f" [{col_name}]"
+                                st.rerun()
+                            
+                if selected_prompt_title == "Custom Prompt":
+                    custom_json_toggle = st.toggle("Enable JSON Output Mode")
+                    if custom_json_toggle:
+                        output_format = "json"
+                        
+                        col_input, col_btn = st.columns([0.85, 0.15])
+                        with col_input:
+                            custom_cols_input = st.text_input("Define JSON Output Keys (comma-separated). Press Enter or click Add! 👇", placeholder="e.g. title, summary, score")
+                        with col_btn:
+                            st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+                            st.button("Add", use_container_width=True, key="add_json_keys_btn")
+                            
+                        if custom_cols_input:
+                            output_columns = [x.strip() for x in custom_cols_input.split(",") if x.strip()]
+                        
+                if output_format == "json":
+                    st.success(f"**JSON Mode Active:** Output will be parsed into {len(output_columns) if output_columns else 'multiple'} distinct columns: `{', '.join(output_columns)}`")
+                            
+                user_prompt = st.text_area("User Prompt", key="flex_prompt", height=150)
+                st.caption("Use `[Column Name]` to insert variables from your selected columns. E.g. `[Title]`.")
+                
+                json_instruction = ""
+                if output_format == "json":
+                    if output_columns:
+                        formatted_keys = ", ".join([f'"{k}"' for k in output_columns])
+                        json_instruction = f"\n\nYou must respond strictly with a valid JSON object containing exactly the following keys: {formatted_keys}"
+                    else:
+                        json_instruction = "\n\nYou must respond strictly with a valid JSON object."
+                    st.info(f"🤖 **Auto-Appended Instruction:** *{json_instruction}*")
+                
+                # Live Preview with highlighting
+                if user_prompt:
+                    preview_text = user_prompt
+                    example_text = user_prompt
+                    has_cols = bool(selected_cols)
+                    
+                    if has_cols:
+                        first_row = df_flex.iloc[0] if not df_flex.empty else None
+                        for col in selected_cols:
+                            tag = f"[{col}]"
+                            # Blueprint preview
+                            preview_text = preview_text.replace(tag, f"<span style='color:#3498db; font-weight:bold;'>{tag}</span>")
+                            
+                            # Actual Example preview
+                            if first_row is not None:
+                                val = str(first_row[col]) if pd.notna(first_row[col]) else ""
+                                example_text = example_text.replace(tag, f"<span style='color:#2ecc71; font-weight:bold;'>{val}</span>")
+                                
+                    st.markdown("**Live Prompt Preview:**")
+                    st.markdown(f"<div style='padding:15px; border:1px solid #444; border-radius:5px; background-color: #1e1e1e; margin-bottom: 20px;'>{preview_text}</div>", unsafe_allow_html=True)
+                    
+                    if has_cols and not df_flex.empty:
+                        st.markdown("**Example Output (Row 1):**")
+                        st.markdown(f"<div style='padding:15px; border:1px solid #444; border-radius:5px; background-color: #1e1e1e; margin-bottom: 20px;'>{example_text}</div>", unsafe_allow_html=True)
+                
+                
+                # Estimate Cost
+                if user_prompt:
+                    # Initialize tiktoken encoding
+                    try:
+                        encoding = tiktoken.encoding_for_model(selected_model if selected_model in ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"] else "gpt-4o")
+                    except Exception:
+                        encoding = tiktoken.get_encoding("cl100k_base")
+                        
+                    base_tokens = len(encoding.encode(user_prompt))
+                    
+                    dynamic_tokens = 0
+                    if selected_cols:
+                        # Estimate avg sequence length by looking at first 10 rows
+                        sample_df = df_flex.head(10)
+                        sample_lens = []
+                        for col in selected_cols:
+                            sample_lens.extend([len(encoding.encode(str(x))) for x in sample_df[col].dropna()])
+                        
+                        if sample_lens:
+                            avg_col_tokens = sum(sample_lens) / len(sample_lens)
+                            dynamic_tokens = avg_col_tokens * len(selected_cols) * len(df_flex)
+                            
+                    total_tokens_est = (base_tokens * len(df_flex)) + dynamic_tokens
+                    
+                    # Estimate cost: ~$2.50 / 1M input tokens.
+                    cost_est = (total_tokens_est / 1_000_000) * 2.50
+                    st.info(f"**Estimated API Input Cost:** ~${cost_est:.4f} (Approx. {int(total_tokens_est)} tokens)")
+
+                if st.button("Run FlexSheet", type="primary"):
+                    if not user_prompt:
+                        st.error("Please provide a User Prompt.")
+                    else:
+                        ai_outputs = []
+                        if output_format == "json" and output_columns:
+                            for col in output_columns:
+                                df_flex[col] = None
+                                
+                        progress_bar = st.progress(0, text="Starting execution...")
+                        total_rows = len(df_flex)
+                        
+                        for idx, row in df_flex.iterrows():
+                            # Construct dynamic prompt
+                            current_prompt = user_prompt + json_instruction
+                            if selected_cols:
+                                for col in selected_cols:
+                                    tag = f"[{col}]"
+                                    if tag in current_prompt:
+                                        val = str(row[col]) if pd.notna(row[col]) else ""
+                                        current_prompt = current_prompt.replace(tag, val)
+                            
+                            # Update progress
+                            progress_bar.progress((idx) / total_rows, text=f"Processing row {idx + 1} of {total_rows}...")
+                            
+                            # API Call
+                            is_json_mode = (output_format == "json")
+                            res = backend.run_flexsheet_prompt(current_prompt, client, selected_model, is_json=is_json_mode)
+                            
+                            if is_json_mode and output_columns:
+                                try:
+                                    parsed_json = json.loads(res)
+                                    for col in output_columns:
+                                        df_flex.at[idx, col] = parsed_json.get(col, "JSON Error")
+                                except json.JSONDecodeError:
+                                    for col in output_columns:
+                                        df_flex.at[idx, col] = "JSON Error"
+                            else:
+                                ai_outputs.append(res)
+                            
+                        progress_bar.progress(1.0, text="FlexSheet Execution Complete!")
+                        st.success("Execution complete. Check the updated data below.")
+                        
+                        if not (output_format == "json" and output_columns):
+                            df_flex["AI Output"] = ai_outputs
+                            
+                        st.dataframe(df_flex)
+                        
+                        csv_data = df_flex.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="Download Updated Data as CSV",
+                            data=csv_data,
+                            file_name="flexsheet_results.csv",
+                            mime="text/csv"
+                        )

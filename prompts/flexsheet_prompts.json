@@ -1,0 +1,15 @@
+[
+    {
+        "title": "Test Prompt",
+        "prompt": "Tell a joke based on the title \"[Title]\" and the meta description \"[Meta description]\""
+    },
+    {
+        "title": "SEO Metadata Generator",
+        "prompt": "You are a compliance-focused financial educator and SEO copywriter for a major financial institution. Your primary goal is to create neutral, descriptive, and educational metadata.\n\nYour task is to analyze the following title  : [Title] and meta description: [Meta description] as well as H1: [H1] and multiple H2s: [H2] and generate a concise, SEO-optimized title and a compelling meta description.\n\n**Constraints:**\n1. The title must be 60 characters or less.\n2. The meta description must be 160 characters or less.\n3. The title **MUST NOT** contain the brand name \"Saxo\".\n4. Your response must be a single, minified JSON object with two keys: \"title\" and \"description\".\n5. **CRITICAL COMPLIANCE RULE:** The tone must be strictly educational and neutral. You must describe the *topic* of the article based on the content you have received, not the *benefit* to the reader. AVOID any language that could be interpreted as financial advice, a recommendation, a promise, or a guarantee.\n\n**Examples of Tone and Phrasing:**\n- BAD: \"Generate Steady Income with Puts\" (This is a promise).\n- GOOD: \"Exploring How Puts Can Be Used for Income\" (This is educational and conditional).\n- BAD: \"The Best Way to Profit from Options\" (This is advice).\n- GOOD: \"An Introduction to Common Options Strategies\" (This is neutral).\n- BAD: \"Discover how to earn steady income...\" (This is a direct claim).\n- GOOD: \"Learn about a strategy that some investors use for income...\" (This is descriptive and attributes the action to others).\n\n**Article Text:**\n[Article Text]",
+        "output_format": "json",
+        "output_columns": [
+            "title",
+            "description"
+        ]
+    }
+]
