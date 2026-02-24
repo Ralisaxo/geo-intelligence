@@ -2155,7 +2155,7 @@ elif current_page == "AI Powered Tools":
 
 # --- PAGE: RANDOM TOOLS ---
 elif current_page == "Random Tools":
-    tabs = st.tabs(["Sitemap Checker"])
+    tabs = st.tabs(["Sitemap Checker", "URL Classifier"])
     
     with tabs[0]:
         st.markdown("#### Sitemap Checker")
@@ -2250,5 +2250,110 @@ elif current_page == "Random Tools":
                 label="Download Excel File",
                 data=st.session_state.sitemap_excel_buffer,
                 file_name="sitemap_extract.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+    with tabs[1]:
+        st.markdown("#### URL Classifier")
+        
+        # Initialize session state for this tool
+        if "classifier_processed" not in st.session_state:
+            st.session_state.classifier_processed = False
+            st.session_state.classifier_df = None
+            st.session_state.classifier_summary = None
+            st.session_state.classifier_cat_summary = None
+            st.session_state.classifier_excel_buffer = None
+            
+        input_method = st.radio("Input Method", ["Paste URLs", "Upload File (CSV/XLSX)"], horizontal=True)
+        
+        urls_to_process = []
+        original_df = None
+        url_col = None
+        
+        if input_method == "Paste URLs":
+            raw_urls = st.text_area("Paste URLs (one per line)", height=150)
+            if raw_urls.strip():
+                urls_to_process = [u.strip() for u in raw_urls.split('\n') if u.strip()]
+                original_df = pd.DataFrame({"URL": urls_to_process})
+                url_col = "URL"
+                
+        else:
+            uploaded_file = st.file_uploader("Upload CSV or Excel file", type=["csv", "xlsx"])
+            if uploaded_file:
+                try:
+                    if uploaded_file.name.endswith(".csv"):
+                        original_df = pd.read_csv(uploaded_file)
+                    else:
+                        original_df = pd.read_excel(uploaded_file)
+                        
+                    url_col = st.selectbox("Select column containing URLs", options=original_df.columns, index=0)
+                    if url_col:
+                        urls_to_process = original_df[url_col].dropna().astype(str).tolist()
+                except Exception as e:
+                    st.error(f"Error reading file: {e}")
+                    
+        col_run_c, col_cl_c = st.columns([1, 5])
+        with col_run_c:
+            run_c_btn = st.button("Classify URLs", key="btn_classify", type="primary")
+        with col_cl_c:
+            cl_c_btn = st.button("Clear Data", key="btn_clear_classify")
+            
+        if cl_c_btn:
+            st.session_state.classifier_processed = False
+            st.session_state.classifier_df = None
+            st.session_state.classifier_summary = None
+            st.session_state.classifier_cat_summary = None
+            st.session_state.classifier_excel_buffer = None
+            st.rerun()
+            
+        if run_c_btn:
+            if not urls_to_process:
+                st.warning("Please provide valid URLs to classify.")
+            else:
+                with st.spinner(f"Classifying {len(urls_to_process)} URLs..."):
+                    markets = [backend.categorize_market(u) for u in urls_to_process]
+                    websites = [backend.categorize_website(u) for u in urls_to_process]
+                    
+                    # Ensure original columns are kept and new ones appended at the end
+                    df_out = original_df.copy()
+                    df_out["Market"] = markets
+                    df_out["Website Category"] = websites
+                    
+                    summary_df = df_out.groupby("Market").size().reset_index(name="Count")
+                    summary_category_df = df_out.groupby("Website Category").size().reset_index(name="Count")
+                    
+                    import io
+                    excel_buffer = io.BytesIO()
+                    with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+                        df_out.to_excel(writer, sheet_name="Categorized_URLs", index=False)
+                        summary_df.to_excel(writer, sheet_name="Market_Summary", index=False)
+                        summary_category_df.to_excel(writer, sheet_name="Category_Summary", index=False)
+                        
+                    st.session_state.classifier_processed = True
+                    st.session_state.classifier_df = df_out
+                    st.session_state.classifier_summary = summary_df
+                    st.session_state.classifier_cat_summary = summary_category_df
+                    st.session_state.classifier_excel_buffer = excel_buffer.getvalue()
+
+        if st.session_state.classifier_processed:
+            st.success(f"Successfully classified {len(st.session_state.classifier_df)} URLs.")
+            
+            c1_c, c2_c = st.columns([2, 1])
+            with c1_c:
+                st.markdown("##### Categorized Data")
+                st.dataframe(st.session_state.classifier_df, use_container_width=True)
+                
+            with c2_c:
+                st.markdown("##### Summaries")
+                sum_tabs_c = st.tabs(["Market Summary", "Category Summary"])
+                with sum_tabs_c[0]:
+                    st.dataframe(st.session_state.classifier_summary, use_container_width=True)
+                with sum_tabs_c[1]:
+                    st.dataframe(st.session_state.classifier_cat_summary, use_container_width=True)
+                
+            st.download_button(
+                label="Download Excel Export",
+                data=st.session_state.classifier_excel_buffer,
+                file_name="url_classification.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
