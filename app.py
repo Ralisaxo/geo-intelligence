@@ -9,6 +9,29 @@ import tiktoken
 import json
 
 # -----------------------------------------------------------------------------
+# UTILITIES
+# -----------------------------------------------------------------------------
+def estimate_tokens_and_cost(texts, model_name="gpt-4o", output_tokens_est=0):
+    """
+    Estimates the number of input tokens and the estimated cost for a given text or list of texts.
+    Default cost is based on GPT-4o pricing ($2.50 per 1M input tokens, $10.00 per 1M output tokens).
+    """
+    if isinstance(texts, str):
+        texts = [texts]
+        
+    try:
+        encoding = tiktoken.encoding_for_model(model_name if model_name in ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"] else "gpt-4o")
+    except Exception:
+        encoding = tiktoken.get_encoding("cl100k_base")
+        
+    total_input_tokens = sum(len(encoding.encode(text)) for text in texts if text)
+    
+    # Estimate cost: ~$2.50 / 1M input tokens, ~$10.00 / 1M output tokens
+    cost_est = (total_input_tokens / 1_000_000) * 2.50 + (output_tokens_est / 1_000_000) * 10.00
+    
+    return total_input_tokens, cost_est
+
+# -----------------------------------------------------------------------------
 # AUTHENTICATION
 # -----------------------------------------------------------------------------
 auth.check_password()
@@ -991,10 +1014,25 @@ elif current_page == "Semantic Triples":
                     iterations_val = st.session_state.get("iterations", 3)
                     total_requests = num_prompts * iterations_val * num_models
 
+                    # Actual Final Prompts Creation for Estimation
+                    final_prompts_for_est = []
+                    for line in prompts_list_raw:
+                        if st.session_state['prompt_mode'] == 'inside_out':
+                            limit = st.session_state.get('word_limit', 1)
+                            prompt = f"Complete the sentence with up to {limit} word(s) or adjective(s). Do NOT output a full sentence. Do NOT explain. Sentence: {line}"
+                            final_prompts_for_est.append(prompt)
+                        elif st.session_state['prompt_mode'] == 'outside_in':
+                            prompt = f"Output exactly one brand name. Do NOT output more than one name. Output only the name. Question: {line}"
+                            final_prompts_for_est.append(prompt)
+                        else:
+                            final_prompts_for_est.append(line)
+
                     # Estimates
-                    est_input_tokens = total_requests * 30 
-                    est_output_tokens = total_requests * 5 
-                    est_cost = (est_input_tokens / 1_000_000 * 5.00) + (est_output_tokens / 1_000_000 * 15.00)
+                    # Replicate tokens across iterations and models
+                    all_requests_texts = final_prompts_for_est * iterations_val * num_models
+                    est_output_tokens = total_requests * 5
+                    
+                    est_input_tokens, est_cost = estimate_tokens_and_cost(all_requests_texts, output_tokens_est=est_output_tokens)
 
                     # Vertical Cards
                     with st.container(border=True):
@@ -1002,7 +1040,7 @@ elif current_page == "Semantic Triples":
                     with st.container(border=True):
                         st.metric("Est. Cost", f"${est_cost:.4f}")
                     with st.container(border=True):
-                        st.metric("Est. Tokens", f"{est_input_tokens + est_output_tokens}")
+                        st.metric("Est. Tokens", f"{int(est_input_tokens + est_output_tokens)}")
 
 
             # --- Execution ---
@@ -1704,8 +1742,10 @@ elif current_page == "LLM Monitoring":
             st.caption(f"Selected {len(tasks_to_verify)} out of {len(tasks)} items.")
             
             # Cost Update based on selection
-            est_cost = len(tasks_to_verify) * 0.002
-            st.caption(f"💰 Est. Verify Cost: ~${est_cost:.3f}")
+            prompts_to_verify_text = [t.get('prompt', '') for t in tasks_to_verify]
+            est_output_tokens = len(tasks_to_verify) * 10  # Roughly 10 tokens for a verify response
+            est_input_tokens, est_cost = estimate_tokens_and_cost(prompts_to_verify_text, output_tokens_est=est_output_tokens)
+            st.caption(f"💰 Est. Verify Cost: ~${est_cost:.4f} ({int(est_input_tokens)} input tokens)")
 
             # 3. VERIFY STAGE
             if st.button("Verify Selected", type="primary"):
@@ -2071,24 +2111,19 @@ elif current_page == "AI Powered Tools":
                 
                 # Estimate Cost
                 if user_prompt:
-                    # Initialize tiktoken encoding
-                    try:
-                        encoding = tiktoken.encoding_for_model(selected_model if selected_model in ["gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo"] else "gpt-4o")
-                    except Exception:
-                        encoding = tiktoken.get_encoding("cl100k_base")
-                        
-                    base_tokens = len(encoding.encode(user_prompt))
+                    base_tokens, _ = estimate_tokens_and_cost(user_prompt, model_name=selected_model)
                     
                     dynamic_tokens = 0
                     if selected_cols:
                         # Estimate avg sequence length by looking at first 10 rows
                         sample_df = df_flex.head(10)
-                        sample_lens = []
+                        sample_texts = []
                         for col in selected_cols:
-                            sample_lens.extend([len(encoding.encode(str(x))) for x in sample_df[col].dropna()])
+                            sample_texts.extend([str(x) for x in sample_df[col].dropna()])
                         
-                        if sample_lens:
-                            avg_col_tokens = sum(sample_lens) / len(sample_lens)
+                        if sample_texts:
+                            t_count, _ = estimate_tokens_and_cost(sample_texts, model_name=selected_model)
+                            avg_col_tokens = t_count / len(sample_texts)
                             dynamic_tokens = avg_col_tokens * len(selected_cols) * len(df_flex)
                             
                     total_tokens_est = (base_tokens * len(df_flex)) + dynamic_tokens
