@@ -18,6 +18,7 @@ from google.genai import types
 import numpy as np
 from sklearn.decomposition import PCA
 from pathlib import Path
+from bs4 import BeautifulSoup
 
 DB_FILE = "geo_cache.db"
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
@@ -1427,4 +1428,165 @@ def fetch_unique_tags(brand_id, api_token):
         return {}
         
     return unique_tags
+
+# -----------------------------------------------------------------------------
+# RANDOM TOOLS FUNCTIONS
+# -----------------------------------------------------------------------------
+def extract_all_sitemap_urls(sitemap_urls, progress_callback=None):
+    all_urls = []
+    
+    def crawl_sitemap(url):
+        if progress_callback:
+            progress_callback(url)
+            
+        try:
+            response = requests.get(url, timeout=15)
+            response.raise_for_status()
+            
+            # Using 'xml' which defaults to lxml's xml parser if installed,
+            # or the builtin if lxml isn't available. "lxml-xml" forces lxml.
+            soup = BeautifulSoup(response.content, "xml")
+            
+            # Find sub-sitemaps
+            sitemaps = soup.find_all("sitemap")
+            for s in sitemaps:
+                loc = s.find("loc")
+                if loc and loc.text:
+                    crawl_sitemap(loc.text.strip())
+                    
+            # Find URLs
+            urls = soup.find_all("url")
+            for u in urls:
+                loc = u.find("loc")
+                if loc and loc.text:
+                    all_urls.append(loc.text.strip())
+                    
+        except Exception as e:
+            print(f"Error fetching sitemap {url}: {e}")
+            
+    for url in sitemap_urls:
+        if url.strip():
+            crawl_sitemap(url.strip())
+            
+    return list(set(all_urls))
+
+def categorize_market(url):
+    u = url.lower()
+    if "bgsaxo.it" in u:
+        return "IT"
+    if "/da-dk" in u:
+        return "DK"
+    if "/nb-no" in u:
+        return "NO"
+    if "/fr-be" in u or "/nl-be" in u:
+        return "BE"
+    if "/rs-rs" in u or "/en-au" in u or "/en-hk" in u or "/zh-hk" in u:
+        return "Non-Active"
+    if "/cs-cz" in u:
+        return "CZ"
+    if "/fr-fr" in u:
+        return "FR"
+    if "/en-mena" in u or "/ar-mena" in u:
+        return "MENA"
+    if "/nl-nl" in u:
+        return "NL"
+    if "/pl-pl" in u:
+        return "PL"
+    if "/en-sg" in u:
+        return "SG"
+    if "/sk-sk" in u:
+        return "SK"
+    if "/en-ch" in u or "/fr-ch" in u or "/de-ch" in u:
+        return "CH"
+    if "/en-uk" in u or "/en-gb" in u:
+        return "UK"
+    if "/ja-jp" in u:
+        return "JP"
+    return "GL"
+
+def categorize_website(url):
+    """
+    Categorizes a URL based on the Oncrawl segmentation rules for Website Categories.
+    Prioritizes top-to-bottom as per the original JSON structure.
+    """
+    u = url.lower()
+    
+    # 2. Global rule: If it has query parameters, dump it to "Other"
+    if "?" in u:
+        return "Other"
+        
+    # Products
+    if "/products" in u and not ("/google/products" in u or "/saxowealthcare" in u or "/products/platforms" in u or "/login" in u or "/rates-and-conditions" in u):
+        return "Products"
+        
+    # Discover Hub
+    if ("/learn" in u or "/glossary" in u) and not ("/learn-options" in u or "/learn-to-trade-in-uncertain-markets" in u or "/saxoinvestor" in u or "/us-election" in u or "/uk-isa" in u or "/education" in u or "test" in u or "content/articles" in u or "/campaigns/" in u):
+        return "Discover Hub"
+        
+    # Accounts
+    if "/accounts" in u and "/login" not in u:
+        return "Accounts"
+        
+    # Legal
+    if "/legal" in u:
+        return "Legal"
+        
+    # Rates & Conditions
+    if "/rates-and-conditions" in u:
+        return "Rates & Conditions"
+        
+    # Campaigns
+    if "/campaigns" in u:
+        return "Campaigns"
+        
+    # Institutional
+    if "/institutional-and-partners" in u:
+        return "Institutional"
+        
+    # About Us & Contact
+    if ("/about" in u or "/contact-us" in u) and not ("/institutional-and-partners" in u or "/legal" in u):
+        return "About Us & Contact"
+        
+    # Insights & Commentaries
+    if ("/insights" in u or "/content/commentaries" in u or "/content/articles" in u) and not ("/ja-jp/content/commentaries/wnu/" in u):
+        return "Insights & Commentaries"
+        
+    # Platforms
+    if "/platforms" in u and not ("campaigns/platforms" in u or "/webinars" in u or "/login" in u or "/institutional-and-partners" in u):
+        return "Platforms"
+        
+    # Login
+    if "/login" in u and not ("/insights" in u or "/commentaries/wnu/whats-new/" in u):
+        return "Login"
+        
+    # Home pages
+    # 1. Trailing slash modification: allow optional trailing slash
+    # The JSON used equals for some ("https://cn.saxobank.com/", "https://www.home.saxo/en-mena", "https://www.home.saxo/", "https://www.home.saxo/ar-mena") and regex for "https://www.home.saxo/..-..$"
+    # Rather than full regex, we can check basic matches for homepages.
+    
+    # Check absolute matches first (with or without trailing slash)
+    exact_matches = [
+        "https://cn.saxobank.com", "https://cn.saxobank.com/",
+        "https://www.home.saxo/en-mena", "https://www.home.saxo/en-mena/",
+        "https://www.home.saxo/ar-mena", "https://www.home.saxo/ar-mena/",
+        "https://www.home.saxo", "https://www.home.saxo/"
+    ]
+    if u in exact_matches:
+        return "Home pages"
+        
+    # Check the "https://www.home.saxo/..-.." regex equivalent (e.g. https://www.home.saxo/da-dk or https://www.home.saxo/da-dk/)
+    if u.startswith("https://www.home.saxo/") and len(u) >= 27:
+        # e.g., "https://www.home.saxo/da-dk" is 27 chars.
+        parts = u.split("https://www.home.saxo/")[1].split("/")
+        if len(parts) > 0 and len(parts[0]) == 5 and parts[0][2] == "-":
+            # If it's JUST the locale or locale + slash
+            if len(parts) == 1 or (len(parts) == 2 and parts[1] == ""):
+                return "Home pages"
+                
+    # Juno Stocks
+    if "/markets/stocks/" in u:
+        return "Juno Stocks"
+        
+    # 3. Fallback
+    return "Other"
 

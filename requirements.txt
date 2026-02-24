@@ -8,3 +8,6 @@ matplotlib
 scikit-learn
 praw
 tiktoken
+beautifulsoup4
+lxml
+openpyxl

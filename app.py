@@ -97,7 +97,7 @@ st.markdown("### Authority Gap & Brand Intelligence Dashboard")
 # -----------------------------------------------------------------------------
 st.sidebar.title("Saxo GEO Tool")
 st.sidebar.header("🧭 Navigation")
-current_page = st.sidebar.radio("Navigation", ["Overview", "Knowledge Management", "Semantic Triples", "Reddit Analysis", "LLM Monitoring", "AI Powered Tools"], label_visibility="collapsed")
+current_page = st.sidebar.radio("Navigation", ["Overview", "Knowledge Management", "Semantic Triples", "Reddit Analysis", "LLM Monitoring", "AI Powered Tools", "Random Tools"], label_visibility="collapsed")
 st.sidebar.markdown("---")
 st.sidebar.header("🕹️ Controls")
 
@@ -2152,3 +2152,103 @@ elif current_page == "AI Powered Tools":
                             file_name="flexsheet_results.csv",
                             mime="text/csv"
                         )
+
+# --- PAGE: RANDOM TOOLS ---
+elif current_page == "Random Tools":
+    tabs = st.tabs(["Sitemap Checker"])
+    
+    with tabs[0]:
+        st.markdown("#### Sitemap Checker")
+        
+        # Initialize session state for this tool
+        if "sitemap_processed" not in st.session_state:
+            st.session_state.sitemap_processed = False
+            st.session_state.sitemap_df = None
+            st.session_state.sitemap_summary = None
+            st.session_state.sitemap_category_summary = None
+            st.session_state.sitemap_excel_buffer = None
+            
+        sitemap_urls_input = st.text_area(
+            "Enter Sitemap URLs (one per line, e.g., https://www.example.com/sitemap.xml)",
+            value="https://www.home.saxo/sitemap.xml\nhttps://www.bgsaxo.it/sitemap.xml",
+            height=150
+        )
+        
+        col_run, col_clear = st.columns([1, 5])
+        with col_run:
+            run_btn = st.button("Crawl Sitemaps", type="primary")
+        with col_clear:
+            clear_btn = st.button("Clear Data")
+            
+        if clear_btn:
+            st.session_state.sitemap_processed = False
+            st.session_state.sitemap_df = None
+            st.session_state.sitemap_summary = None
+            st.session_state.sitemap_category_summary = None
+            st.session_state.sitemap_excel_buffer = None
+            st.rerun()
+        
+        if run_btn:
+            if sitemap_urls_input.strip():
+                # Split by newline and filter out empty strings
+                sitemap_list = [url.strip() for url in sitemap_urls_input.split('\n') if url.strip()]
+                
+                with st.spinner(f"Crawling {len(sitemap_list)} sitemap roots..."):
+                    
+                    status_placeholder = st.empty()
+                    def update_status(current_url):
+                        status_placeholder.info(f"Crawling: {current_url}")
+                        
+                    all_urls = backend.extract_all_sitemap_urls(sitemap_list, progress_callback=update_status)
+                    
+                    status_placeholder.empty()
+                    
+                    if all_urls:
+                        # Categorize URLs
+                        data = [{"URL": u, "Market": backend.categorize_market(u), "Website Category": backend.categorize_website(u)} for u in all_urls]
+                        df_sitemap = pd.DataFrame(data)
+                        summary_df = df_sitemap.groupby("Market").size().reset_index(name="Count")
+                        summary_category_df = df_sitemap.groupby("Website Category").size().reset_index(name="Count")
+                        
+                        # Export formatting
+                        import io
+                        excel_buffer = io.BytesIO()
+                        with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+                            df_sitemap.to_excel(writer, sheet_name="Raw_URLs", index=False)
+                            summary_df.to_excel(writer, sheet_name="Market_Summary", index=False)
+                            summary_category_df.to_excel(writer, sheet_name="Category_Summary", index=False)
+                            
+                        # Save to session state
+                        st.session_state.sitemap_processed = True
+                        st.session_state.sitemap_df = df_sitemap
+                        st.session_state.sitemap_summary = summary_df
+                        st.session_state.sitemap_category_summary = summary_category_df
+                        st.session_state.sitemap_excel_buffer = excel_buffer.getvalue()
+                    else:
+                        st.warning("No URLs found or unable to fetch the sitemaps.")
+            else:
+                st.warning("Please enter at least one sitemap URL.")
+
+        # Display if processed
+        if st.session_state.sitemap_processed:
+            st.success(f"Found {len(st.session_state.sitemap_df)} unique URLs.")
+            
+            c1, c2 = st.columns([2, 1])
+            with c1:
+                st.markdown("##### Extracted URLs")
+                st.dataframe(st.session_state.sitemap_df, use_container_width=True)
+                
+            with c2:
+                st.markdown("##### Summaries")
+                sum_tabs = st.tabs(["Market Summary", "Category Summary"])
+                with sum_tabs[0]:
+                    st.dataframe(st.session_state.sitemap_summary, use_container_width=True)
+                with sum_tabs[1]:
+                    st.dataframe(st.session_state.sitemap_category_summary, use_container_width=True)
+                
+            st.download_button(
+                label="Download Excel File",
+                data=st.session_state.sitemap_excel_buffer,
+                file_name="sitemap_extract.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
