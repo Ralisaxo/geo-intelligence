@@ -1279,10 +1279,157 @@ def fetch_accuranker_data(brand_id, tag, api_token):
                      "engine": engine,
                      "result_obj": candidate
                  })
-
     total = len(verification_tasks)
     
     return verification_tasks
+
+def fetch_accuranker_sources(brand_id, tag, start_date, end_date, api_token, calculate_latest_only=True):
+    """
+    Fetches all prompts for a given date range and extracts all cited source URLs.
+    Aggregates them by URL and Domain and calculates percentages based on prompts count.
+    If calculate_latest_only is True, it matches AccuRanker UI behavior by only looking at the latest snapshot date in the period per prompt.
+    """
+    if not brand_id or not api_token or not start_date or not end_date:
+        return pd.DataFrame()
+
+    url = f"https://app.accuranker.com/api/v4/brands/{brand_id}/prompts/"
+    headers = {
+        "Authorization": f"Token {api_token}",
+        "Accept": "application/json",
+    }
+    
+    # We need created_at to filter dates properly, and engine to count responses per engine
+    params = {
+        "fields": "id,prompt,tags,results.created_at,results.engine,results.sources.url",
+        "limit": 1000,
+        "period_from": start_date.strftime("%Y-%m-%d") if hasattr(start_date, 'strftime') else start_date,
+        "period_to": end_date.strftime("%Y-%m-%d") if hasattr(end_date, 'strftime') else end_date
+    }
+    
+    all_prompts = []
+    
+    try:
+        while url:
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            chunk = []
+            if isinstance(data, list):
+                chunk = data
+                url = None
+            elif isinstance(data, dict):
+                chunk = data.get('results', [])
+                url = data.get('next')
+                if url: params = None
+            
+            all_prompts.extend(chunk)
+            
+            if len(all_prompts) > 10000: # Safety
+                break
+
+    except Exception as e:
+        print(f"API Error fetching sources: {e}")
+        return pd.DataFrame()
+
+    # Filter by tag and process sources
+    tag_lower = tag.lower() if tag else None
+    
+    source_counts = {} # url -> count
+    domain_prompts = {} # domain -> total engine responses
+    domain_counts = {} # domain -> count of promos having AT LEAST ONE url from this domain
+    total_matching_prompts = 0
+    
+    for p in all_prompts:
+        p_tags = [t.lower() for t in (p.get('tags') or [])]
+        if tag_lower and tag_lower not in p_tags:
+            continue
+            
+        total_matching_prompts += 1
+        
+        # Collect unique sources in this prompt (for URL stats)
+        unique_urls_in_prompt = set()
+        # Collect unique domains in this prompt (for Domain stats)
+        unique_domains_in_prompt = set()
+        
+        results = p.get('results', [])
+        
+        if calculate_latest_only:
+            # Find latest date in this prompt's results
+            dates = set(r.get('created_at', '')[:10] for r in results if r.get('created_at'))
+            if not dates:
+                continue
+            latest_date = max(dates)
+        
+        for r in results:
+            if calculate_latest_only and not r.get('created_at', '').startswith(latest_date):
+                continue
+                
+            sources = r.get('sources', [])
+            
+            domains_this_response = set()
+            urls_this_response = set()
+            
+            for s in sources:
+                s_url = s.get('url')
+                if s_url:
+                    urls_this_response.add(s_url)
+                    unique_urls_in_prompt.add(s_url)
+                    try:
+                        parsed = urllib.parse.urlparse(s_url)
+                        domain = parsed.netloc
+                        if domain.startswith("www."):
+                            domain = domain[4:]
+                        domains_this_response.add(domain)
+                        unique_domains_in_prompt.add(domain)
+                    except Exception:
+                        pass
+            
+            # Count occurrences per response (how many times it showed up across all engines on latest day)
+            for d in domains_this_response:
+                domain_prompts[d] = domain_prompts.get(d, 0) + 1
+            for u in urls_this_response:
+                source_counts[u] = source_counts.get(u, 0) + 1
+                    
+        # Add to global unique keyword counts
+        for d in unique_domains_in_prompt:
+            domain_counts[d] = domain_counts.get(d, 0) + 1
+
+    # Format output
+    output_data = []
+    
+    # We will build output data keyed by URL and Domain
+    for url, count in source_counts.items():
+        # Clean URL to get Domain
+        try:
+            parsed = urllib.parse.urlparse(url)
+            domain = parsed.netloc
+            if domain.startswith("www."):
+                domain = domain[4:]
+        except Exception:
+            domain = "Unknown"
+            
+        url_pct = (count / total_matching_prompts * 100) if total_matching_prompts > 0 else 0
+        
+        # Domain citations: how many prompts cite this domain at least once
+        domain_kw_count = domain_counts.get(domain, 0)
+        domain_pct = (domain_kw_count / total_matching_prompts * 100) if total_matching_prompts > 0 else 0
+        domain_total_prompts = domain_prompts.get(domain, 0)
+        
+        output_data.append({
+            "Domain": domain,
+            "Domain Cited (%)": domain_pct,
+            "Domain Prompts": domain_total_prompts,
+            "Full URL": url,
+            "URL Cited (%)": url_pct,
+            "Prompts": count
+        })
+
+    df = pd.DataFrame(output_data)
+    if not df.empty:
+        df = df.sort_values(by=["Domain Cited (%)", "URL Cited (%)"], ascending=[False, False]).reset_index(drop=True)
+    return df
+
 
 def verify_accuranker_data(tasks, openai_client, progress_callback=None):
     """
