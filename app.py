@@ -1581,92 +1581,132 @@ elif current_page == "Reddit Analysis":
 
 # --- PAGE: LLM MONITORING ---
 elif current_page == "LLM Monitoring":
-    st.markdown("## 🛡️ LLM Truth Control")
-    st.info("Verify if AI search results verify the 'Ground Truth' defined in AccuRanker.")
+    tab_truth, tab_extract = st.tabs(["🛡️ LLM Truth Control", "⛏️ Source Extraction"])
+    
+    with tab_truth:
+        st.markdown("## 🛡️ LLM Truth Control")
+        st.info("Verify if AI search results verify the 'Ground Truth' defined in AccuRanker.")
 
-    # Brand Dictionary
-    ACCURANKER_BRANDS = {
-        "GEO Experiments": 10000419,
-        "Saxo BE": 10000083,
-        "Saxo CH": 10000084,
-        "Saxo CZ": 10000085,
-        "Saxo DK": 10000087,
-        "Saxo FR": 10000090,
-        "Saxo Institutional": 10000275,
-        "Saxo IT": 10000092,
-        "Saxo JP": 10000095,
-        "Saxo MENA": 10000120,
-        "Saxo NL": 10000097,
-        "Saxo PL": 10000117,
-        "Saxo SG": 10000124,
-        "Saxo UK": 10000079
-    }
+        # Brand Dictionary
+        ACCURANKER_BRANDS = {
+            "GEO Experiments": 10000419,
+            "Saxo BE": 10000083,
+            "Saxo CH": 10000084,
+            "Saxo CZ": 10000085,
+            "Saxo DK": 10000087,
+            "Saxo FR": 10000090,
+            "Saxo Institutional": 10000275,
+            "Saxo IT": 10000092,
+            "Saxo JP": 10000095,
+            "Saxo MENA": 10000120,
+            "Saxo NL": 10000097,
+            "Saxo PL": 10000117,
+            "Saxo SG": 10000124,
+            "Saxo UK": 10000079
+        }
 
-    # Controls
-    with st.container(border=True):
-        c1, c2 = st.columns([1, 1])
-        with c1:
-            selected_brand_name = st.selectbox("Select Brand", list(ACCURANKER_BRANDS.keys()))
-            selected_brand_id = ACCURANKER_BRANDS[selected_brand_name]
-        with c2:
-            # Tag Logic: Fetch on change or if missing
-            accuranker_token = st.secrets.get("ACCURANKER_TOKEN")
+        # Controls
+        with st.container(border=True):
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                selected_brand_name = st.selectbox("Select Brand", list(ACCURANKER_BRANDS.keys()))
+                selected_brand_id = ACCURANKER_BRANDS[selected_brand_name]
+            with c2:
+                # Tag Logic: Fetch on change or if missing
+                accuranker_token = st.secrets.get("ACCURANKER_TOKEN")
             
-            # Unique Key for this brand's tags in session state
-            brand_cache_key = f"tags_{selected_brand_id}"
+                # Unique Key for this brand's tags in session state
+                brand_cache_key = f"tags_{selected_brand_id}"
             
-            if brand_cache_key not in st.session_state:
-                 with st.spinner("Loading Tags..."):
-                      if accuranker_token:
-                          tags_dict = backend.fetch_unique_tags(selected_brand_id, accuranker_token)
-                          st.session_state[brand_cache_key] = tags_dict
-                      else:
-                          st.session_state[brand_cache_key] = {}
+                if brand_cache_key not in st.session_state:
+                     with st.spinner("Loading Tags..."):
+                          if accuranker_token:
+                              tags_dict = backend.fetch_unique_tags(selected_brand_id, accuranker_token)
+                              st.session_state[brand_cache_key] = tags_dict
+                          else:
+                              st.session_state[brand_cache_key] = {}
             
-            # Tags Dict: {TagName: Count}
-            tags_map = st.session_state.get(brand_cache_key, {})
-            # List for Dropdown: "Tag (Count)"
-            tag_options = [f"{t} ({c})" for t, c in tags_map.items()]
+                # Tags Dict: {TagName: Count}
+                tags_map = st.session_state.get(brand_cache_key, {})
+                # List for Dropdown: "Tag (Count)"
+                tag_options = [f"{t} ({c})" for t, c in tags_map.items()]
             
-            # Find default index
-            default_ix = 0
-            for i, opt in enumerate(tag_options):
-                if "Commercial" in opt:
-                    default_ix = i
-                    break
+                # Find default index
+                default_ix = 0
+                for i, opt in enumerate(tag_options):
+                    if "Commercial" in opt:
+                        default_ix = i
+                        break
                 
-            selected_tag_str = st.selectbox("Tag Filter", tag_options, index=default_ix) if tag_options else st.text_input("Tag Filter (No tags found)", value="Commercial")
+                selected_tag_str = st.selectbox("Tag Filter", tag_options, index=default_ix) if tag_options else st.text_input("Tag Filter (No tags found)", value="Commercial")
             
-            # Extract raw tag name
-            target_tag = selected_tag_str.split(" (")[0] if " (" in str(selected_tag_str) else selected_tag_str
+                # Extract raw tag name
+                target_tag = selected_tag_str.split(" (")[0] if " (" in str(selected_tag_str) else selected_tag_str
             
-            # Cost Calculation
-            if selected_tag_str and "(" in str(selected_tag_str):
-                 try:
-                     count = int(selected_tag_str.split("(")[1].replace(")", ""))
-                     est_cost = count * 4 * 0.002 # ~$0.002 per prompt * 4 engines
-                     st.caption(f"💰 Est. Cost: ~${est_cost:.3f}")
-                 except:
-                     pass
+                # Cost Calculation
+                if selected_tag_str and "(" in str(selected_tag_str):
+                     try:
+                         count = int(selected_tag_str.split("(")[1].replace(")", ""))
+                         est_cost = count * 4 * 0.002 # ~$0.002 per prompt * 4 engines
+                         st.caption(f"💰 Est. Cost: ~${est_cost:.3f}")
+                     except:
+                         pass
 
 
 
 
-        # 1. FETCH STAGE
-        st.write("")
-        if st.button("Fetch Prompts", type="primary", use_container_width=False, help="Fetch latest prompts from AccuRanker"):
-            if not accuranker_token:
-                st.error("Missing ACCURANKER_TOKEN in secrets.")
-            else:
-                 with st.spinner("Fetching data from AccuRanker..."):
-                     tasks = backend.fetch_accuranker_data(
-                         selected_brand_id, 
-                         target_tag, 
-                         accuranker_token
-                     )
-                     st.session_state.fetched_tasks = tasks
+            # 1. FETCH STAGE
+            st.write("")
+            if st.button("Fetch Prompts", type="primary", use_container_width=False, help="Fetch latest prompts from AccuRanker"):
+                if not accuranker_token:
+                    st.error("Missing ACCURANKER_TOKEN in secrets.")
+                else:
+                     with st.spinner("Fetching data from AccuRanker..."):
+                         tasks = backend.fetch_accuranker_data(
+                             selected_brand_id, 
+                             target_tag, 
+                             accuranker_token
+                         )
+                         st.session_state.fetched_tasks = tasks
                      
-                     # Initialize Selection DataFrame
+                         # Initialize Selection DataFrame
+                         selection_data = []
+                         for i, t in enumerate(tasks):
+                             has_truth = bool(t.get('truth') and t.get('truth').strip())
+                             truth_display = "✅ Yes" if has_truth else "❌ No"
+                             selection_data.append({
+                                 "Select": True, 
+                                 "Prompt": t.get('prompt'),
+                                 "Engine": t.get('engine'), 
+                                 "Truth Defined?": truth_display,
+                                 "TaskID": i
+                             })
+                         st.session_state.selection_df = pd.DataFrame(selection_data)
+                     
+                         st.success(f"Fetched {len(tasks)} items.")
+
+            # 2. SELECTION STAGE
+            if 'fetched_tasks' in st.session_state and st.session_state.fetched_tasks:
+                tasks = st.session_state.fetched_tasks
+            
+                st.markdown("### Select Prompts to Verify")
+            
+                # Helper Buttons
+                c_sel1, c_sel2, c_spacer = st.columns([1, 1, 8])
+                with c_sel1:
+                    if st.button("Select All", use_container_width=True):
+                        st.session_state.selection_df["Select"] = True
+                        st.session_state['verification_key'] = st.session_state.get('verification_key', 0) + 1
+                        st.rerun()
+                with c_sel2:
+                    if st.button("Unselect All", use_container_width=True):
+                        st.session_state.selection_df["Select"] = False
+                        st.session_state['verification_key'] = st.session_state.get('verification_key', 0) + 1
+                        st.rerun()
+
+                # Editor
+                if 'selection_df' not in st.session_state:
+                    # Should have been created above, but fallback if state was cleared partially
                      selection_data = []
                      for i, t in enumerate(tasks):
                          has_truth = bool(t.get('truth') and t.get('truth').strip())
@@ -1679,283 +1719,393 @@ elif current_page == "LLM Monitoring":
                              "TaskID": i
                          })
                      st.session_state.selection_df = pd.DataFrame(selection_data)
-                     
-                     st.success(f"Fetched {len(tasks)} items.")
 
-        # 2. SELECTION STAGE
-        if 'fetched_tasks' in st.session_state and st.session_state.fetched_tasks:
-            tasks = st.session_state.fetched_tasks
+                edited_df = st.data_editor(
+                    st.session_state.selection_df,
+                    column_config={
+                        "Select": st.column_config.CheckboxColumn("Verify?", default=True),
+                        "Prompt": st.column_config.TextColumn("Prompt", disabled=True),
+                        "Engine": st.column_config.TextColumn("Engine", disabled=True),
+                        "Truth Defined?": st.column_config.TextColumn("Truth Defined?", disabled=True),
+                        "TaskID": None 
+                    },
+                    disabled=["Prompt", "Engine", "Truth Defined?"],
+                    hide_index=True,
+                    width="stretch",
+                    key=f"prompt_selector_{st.session_state.get('verification_key', 0)}" # Unique key
+                )
             
-            st.markdown("### Select Prompts to Verify")
+                # Sync edits back to session state so they persist across reruns
+                st.session_state.selection_df = edited_df
             
-            # Helper Buttons
-            c_sel1, c_sel2, c_spacer = st.columns([1, 1, 8])
-            with c_sel1:
-                if st.button("Select All", use_container_width=True):
-                    st.session_state.selection_df["Select"] = True
-                    st.session_state['verification_key'] = st.session_state.get('verification_key', 0) + 1
-                    st.rerun()
-            with c_sel2:
-                if st.button("Unselect All", use_container_width=True):
-                    st.session_state.selection_df["Select"] = False
-                    st.session_state['verification_key'] = st.session_state.get('verification_key', 0) + 1
-                    st.rerun()
+                # Filter based on selection
+                selected_indices = edited_df[edited_df["Select"]]["TaskID"].tolist()
+                tasks_to_verify = [tasks[i] for i in selected_indices]
+            
+                st.caption(f"Selected {len(tasks_to_verify)} out of {len(tasks)} items.")
+            
+                # Cost Update based on selection
+                prompts_to_verify_text = [t.get('prompt', '') for t in tasks_to_verify]
+                est_output_tokens = len(tasks_to_verify) * 10  # Roughly 10 tokens for a verify response
+                est_input_tokens, est_cost = estimate_tokens_and_cost(prompts_to_verify_text, output_tokens_est=est_output_tokens)
+                st.caption(f"💰 Est. Verify Cost: ~${est_cost:.4f} ({int(est_input_tokens)} input tokens)")
 
-            # Editor
-            if 'selection_df' not in st.session_state:
-                # Should have been created above, but fallback if state was cleared partially
-                 selection_data = []
-                 for i, t in enumerate(tasks):
-                     has_truth = bool(t.get('truth') and t.get('truth').strip())
-                     truth_display = "✅ Yes" if has_truth else "❌ No"
-                     selection_data.append({
-                         "Select": True, 
-                         "Prompt": t.get('prompt'),
-                         "Engine": t.get('engine'), 
-                         "Truth Defined?": truth_display,
-                         "TaskID": i
-                     })
-                 st.session_state.selection_df = pd.DataFrame(selection_data)
+                # 3. VERIFY STAGE
+                if st.button("Verify Selected", type="primary"):
+                     # Check for Missing Truth
+                    no_truth_count = sum(1 for t in tasks_to_verify if not t.get('truth') or not t.get('truth').strip())
+                    if no_truth_count > 0:
+                         st.warning(f"⚠️ **{no_truth_count}** selected prompts do not have a defined Ground Truth and will be skipped.")
 
-            edited_df = st.data_editor(
-                st.session_state.selection_df,
-                column_config={
-                    "Select": st.column_config.CheckboxColumn("Verify?", default=True),
-                    "Prompt": st.column_config.TextColumn("Prompt", disabled=True),
-                    "Engine": st.column_config.TextColumn("Engine", disabled=True),
-                    "Truth Defined?": st.column_config.TextColumn("Truth Defined?", disabled=True),
-                    "TaskID": None 
-                },
-                disabled=["Prompt", "Engine", "Truth Defined?"],
-                hide_index=True,
-                width="stretch",
-                key=f"prompt_selector_{st.session_state.get('verification_key', 0)}" # Unique key
-            )
-            
-            # Sync edits back to session state so they persist across reruns
-            st.session_state.selection_df = edited_df
-            
-            # Filter based on selection
-            selected_indices = edited_df[edited_df["Select"]]["TaskID"].tolist()
-            tasks_to_verify = [tasks[i] for i in selected_indices]
-            
-            st.caption(f"Selected {len(tasks_to_verify)} out of {len(tasks)} items.")
-            
-            # Cost Update based on selection
-            prompts_to_verify_text = [t.get('prompt', '') for t in tasks_to_verify]
-            est_output_tokens = len(tasks_to_verify) * 10  # Roughly 10 tokens for a verify response
-            est_input_tokens, est_cost = estimate_tokens_and_cost(prompts_to_verify_text, output_tokens_est=est_output_tokens)
-            st.caption(f"💰 Est. Verify Cost: ~${est_cost:.4f} ({int(est_input_tokens)} input tokens)")
-
-            # 3. VERIFY STAGE
-            if st.button("Verify Selected", type="primary"):
-                 # Check for Missing Truth
-                no_truth_count = sum(1 for t in tasks_to_verify if not t.get('truth') or not t.get('truth').strip())
-                if no_truth_count > 0:
-                     st.warning(f"⚠️ **{no_truth_count}** selected prompts do not have a defined Ground Truth and will be skipped.")
-
-                 # Progress Bar UI
-                prog_bar = st.progress(0, text="Starting verification...")
+                     # Progress Bar UI
+                    prog_bar = st.progress(0, text="Starting verification...")
                 
-                def update_progress(current, total, msg):
-                    percent = min(current / total, 1.0) if total > 0 else 0
-                    prog_bar.progress(percent, text=msg)
+                    def update_progress(current, total, msg):
+                        percent = min(current / total, 1.0) if total > 0 else 0
+                        prog_bar.progress(percent, text=msg)
                 
-                with st.spinner("Verifying with AI..."):
-                    results = backend.verify_accuranker_data(
-                        tasks_to_verify,
-                        client,
-                        progress_callback=update_progress
-                    )
-                    prog_bar.empty()
-                    st.session_state.truth_results = sorted(results, key=lambda x: x.get('Score', 0), reverse=True)
-                    st.session_state.last_truth_check = time.strftime("%H:%M:%S")
+                    with st.spinner("Verifying with AI..."):
+                        results = backend.verify_accuranker_data(
+                            tasks_to_verify,
+                            client,
+                            progress_callback=update_progress
+                        )
+                        prog_bar.empty()
+                        st.session_state.truth_results = sorted(results, key=lambda x: x.get('Score', 0), reverse=True)
+                        st.session_state.last_truth_check = time.strftime("%H:%M:%S")
 
     
-    # Results Display
-    if 'truth_results' in st.session_state and st.session_state.truth_results:
-        results = st.session_state.truth_results
+        # Results Display
+        if 'truth_results' in st.session_state and st.session_state.truth_results:
+            results = st.session_state.truth_results
         
-        # Checking for API errors in the list
-        if isinstance(results, list) and len(results) > 0 and "error" in results[0]:
-            st.error(results[0]["error"])
-        elif not results:
-            st.warning("No results to display.")
-        else:
-            df_truth = pd.DataFrame(results)
+            # Checking for API errors in the list
+            if isinstance(results, list) and len(results) > 0 and "error" in results[0]:
+                st.error(results[0]["error"])
+            elif not results:
+                st.warning("No results to display.")
+            else:
+                df_truth = pd.DataFrame(results)
             
-            # View Toggle
-            view_mode = st.radio("View Mode", ["Feed View", "Table View"], horizontal=True)
+                # View Toggle
+                view_mode = st.radio("View Mode", ["Feed View", "Table View"], horizontal=True)
             
-            st.markdown(f"**Verified {len(results)} items.** (Last checked: {st.session_state.get('last_truth_check')})")
+                st.markdown(f"**Verified {len(results)} items.** (Last checked: {st.session_state.get('last_truth_check')})")
             
-            # Calculate Average Scores
-            engine_stats = {}
-            for res in results:
-                eng = res.get('Engine', 'Unknown')
-                score = res.get('Score', 0)
-                verdict = res.get('Verdict', 'Unknown')
+                # Calculate Average Scores
+                engine_stats = {}
+                for res in results:
+                    eng = res.get('Engine', 'Unknown')
+                    score = res.get('Score', 0)
+                    verdict = res.get('Verdict', 'Unknown')
                 
-                if eng not in engine_stats:
-                    engine_stats[eng] = {"scores": [], "pass": 0, "fail": 0, "partial": 0}
+                    if eng not in engine_stats:
+                        engine_stats[eng] = {"scores": [], "pass": 0, "fail": 0, "partial": 0}
                 
-                engine_stats[eng]["scores"].append(score)
-                if verdict == "Pass": engine_stats[eng]["pass"] += 1
-                elif verdict == "Fail": engine_stats[eng]["fail"] += 1
-                elif verdict == "Partial": engine_stats[eng]["partial"] += 1
+                    engine_stats[eng]["scores"].append(score)
+                    if verdict == "Pass": engine_stats[eng]["pass"] += 1
+                    elif verdict == "Fail": engine_stats[eng]["fail"] += 1
+                    elif verdict == "Partial": engine_stats[eng]["partial"] += 1
             
-            # Display Metrics
-            st.markdown("### Truth Score")
-            cols = st.columns(len(engine_stats)) if engine_stats else [st.empty()]
-            for idx, (eng, stats) in enumerate(engine_stats.items()):
-                scores = stats["scores"]
-                avg = sum(scores) / len(scores) if scores else 0
+                # Display Metrics
+                st.markdown("### Truth Score")
+                cols = st.columns(len(engine_stats)) if engine_stats else [st.empty()]
+                for idx, (eng, stats) in enumerate(engine_stats.items()):
+                    scores = stats["scores"]
+                    avg = sum(scores) / len(scores) if scores else 0
                 
-                # Color code average
-                score_color = "#e74c3c" # Red
-                if avg >= 80: score_color = "#2ecc71" # Green
-                elif avg >= 50: score_color = "#f1c40f" # Orange
+                    # Color code average
+                    score_color = "#e74c3c" # Red
+                    if avg >= 80: score_color = "#2ecc71" # Green
+                    elif avg >= 50: score_color = "#f1c40f" # Orange
                 
-                with cols[idx]:
-                    st.markdown(f"<div style='text-align: center;'><span style='font-size: 0.9em; font-weight: bold;'>{eng.upper()}</span><br><span style='font-size: 1.8em; font-weight: bold; color: {score_color};'>{avg:.1f}</span></div>", unsafe_allow_html=True)
-                    # Breakdown
-                    st.markdown(
-                        f"""
-                        <div style='text-align: center; font-size: 0.8em; color: #888;'>
-                        <span style='color:#2ecc71'>Pass: {stats['pass']}</span> | 
-                        <span style='color:#f1c40f'>Partial: {stats['partial']}</span> | 
-                        <span style='color:#e74c3c'>Fail: {stats['fail']}</span>
-                        </div>
-                        """, 
-                        unsafe_allow_html=True
+                    with cols[idx]:
+                        st.markdown(f"<div style='text-align: center;'><span style='font-size: 0.9em; font-weight: bold;'>{eng.upper()}</span><br><span style='font-size: 1.8em; font-weight: bold; color: {score_color};'>{avg:.1f}</span></div>", unsafe_allow_html=True)
+                        # Breakdown
+                        st.markdown(
+                            f"""
+                            <div style='text-align: center; font-size: 0.8em; color: #888;'>
+                            <span style='color:#2ecc71'>Pass: {stats['pass']}</span> | 
+                            <span style='color:#f1c40f'>Partial: {stats['partial']}</span> | 
+                            <span style='color:#e74c3c'>Fail: {stats['fail']}</span>
+                            </div>
+                            """, 
+                            unsafe_allow_html=True
+                        )
+
+                st.divider()
+
+                if view_mode == "Table View":
+                    # Prepare data for table: Sources is list of dicts, map to count
+                    df_table = df_truth.copy()
+                    df_table['Source Count'] = df_table['Sources'].apply(lambda x: len(x) if isinstance(x, list) else 0)
+
+                    # Color code verdict
+                    def highlight_verdict(val):
+                        color = 'grey'
+                        if val == 'Pass': color = '#2ecc71'
+                        elif val == 'Fail': color = '#e74c3c'
+                        elif val == 'Partial': color = '#f1c40f'
+                        return f'color: {color}; font-weight: bold'
+
+                    st.dataframe(
+                        df_table,
+                        column_config={
+                            "Verdict": st.column_config.TextColumn("Verdict"),
+                            "Score": st.column_config.ProgressColumn("Confidence", min_value=0, max_value=100),
+                            "Engine": st.column_config.TextColumn("Engine", width="small"),
+                            "Prompt": st.column_config.TextColumn("Prompt", width="medium"),
+                            "Truth": st.column_config.TextColumn("Truth", width="medium"),
+                            "Reason": st.column_config.TextColumn("Reason", width="medium"),
+                            "Source Count": st.column_config.NumberColumn("Sources", help="Count of source URLs"),
+                            "Sources": None, # Hide raw sources
+                        },
+                        use_container_width=True,
+                        hide_index=True
                     )
-
-            st.divider()
-
-            if view_mode == "Table View":
-                # Prepare data for table: Sources is list of dicts, map to count
-                df_table = df_truth.copy()
-                df_table['Source Count'] = df_table['Sources'].apply(lambda x: len(x) if isinstance(x, list) else 0)
-
-                # Color code verdict
-                def highlight_verdict(val):
-                    color = 'grey'
-                    if val == 'Pass': color = '#2ecc71'
-                    elif val == 'Fail': color = '#e74c3c'
-                    elif val == 'Partial': color = '#f1c40f'
-                    return f'color: {color}; font-weight: bold'
-
-                st.dataframe(
-                    df_table,
-                    column_config={
-                        "Verdict": st.column_config.TextColumn("Verdict"),
-                        "Score": st.column_config.ProgressColumn("Confidence", min_value=0, max_value=100),
-                        "Engine": st.column_config.TextColumn("Engine", width="small"),
-                        "Prompt": st.column_config.TextColumn("Prompt", width="medium"),
-                        "Truth": st.column_config.TextColumn("Truth", width="medium"),
-                        "Reason": st.column_config.TextColumn("Reason", width="medium"),
-                        "Source Count": st.column_config.NumberColumn("Sources", help="Count of source URLs"),
-                        "Sources": None, # Hide raw sources
-                    },
-                    use_container_width=True,
-                    hide_index=True
-                )
                 
-            else: # Feed View
-                # Filter Controls
-                all_verdicts = sorted(list(set([r.get('Verdict', 'Unknown') for r in results])))
-                filtered_verdicts = st.multiselect("Filter by Status", all_verdicts, default=all_verdicts)
+                else: # Feed View
+                    # Filter Controls
+                    all_verdicts = sorted(list(set([r.get('Verdict', 'Unknown') for r in results])))
+                    filtered_verdicts = st.multiselect("Filter by Status", all_verdicts, default=all_verdicts)
                 
-                # Group by Prompt
-                grouped_results = {}
-                for item in results:
-                    p_txt = item.get('Prompt')
-                    if p_txt not in grouped_results:
-                        grouped_results[p_txt] = []
-                    grouped_results[p_txt].append(item)
+                    # Group by Prompt
+                    grouped_results = {}
+                    for item in results:
+                        p_txt = item.get('Prompt')
+                        if p_txt not in grouped_results:
+                            grouped_results[p_txt] = []
+                        grouped_results[p_txt].append(item)
                 
-                for prompt_txt, items in grouped_results.items():
-                    # Filter items based on verdict if filter is active
-                    filtered_items = [i for i in items if not filtered_verdicts or i.get('Verdict') in filtered_verdicts]
-                    if not filtered_items and filtered_verdicts:
-                        continue # Skip prompt if no engines match filter
+                    for prompt_txt, items in grouped_results.items():
+                        # Filter items based on verdict if filter is active
+                        filtered_items = [i for i in items if not filtered_verdicts or i.get('Verdict') in filtered_verdicts]
+                        if not filtered_items and filtered_verdicts:
+                            continue # Skip prompt if no engines match filter
                         
-                    # If we have items but some were filtered out, should we still show the prompt? 
-                    # Probably yes, but only show tabs for matching engines.
-                    # Or should we hide the whole prompt if ALL engines are filtered out? -> Yes (done above)
+                        # If we have items but some were filtered out, should we still show the prompt? 
+                        # Probably yes, but only show tabs for matching engines.
+                        # Or should we hide the whole prompt if ALL engines are filtered out? -> Yes (done above)
                     
-                    with st.container(border=True):
-                        st.markdown(f"**Prompt:** *{prompt_txt}*")
+                        with st.container(border=True):
+                            st.markdown(f"**Prompt:** *{prompt_txt}*")
                         
-                        # Tabs for Engines
-                        # Use filtered items to determine which tabs to show? 
-                        # Or show all but indicate filtered? 
-                        # User said "filter the cards", which usually means hide non-matching.
-                        # Since we group by prompt, we should show the prompt if AT LEAST ONE engine matches.
-                        # And inside, what tabs? 
-                        # Let's show only tabs that match the filter.
+                            # Tabs for Engines
+                            # Use filtered items to determine which tabs to show? 
+                            # Or show all but indicate filtered? 
+                            # User said "filter the cards", which usually means hide non-matching.
+                            # Since we group by prompt, we should show the prompt if AT LEAST ONE engine matches.
+                            # And inside, what tabs? 
+                            # Let's show only tabs that match the filter.
                         
 
-                        tab_labels = []
-                        for i in filtered_items:
-                            eng = i.get('Engine', 'Unknown').upper()
-                            verdict = i.get("Verdict", "Unknown")
+                            tab_labels = []
+                            for i in filtered_items:
+                                eng = i.get('Engine', 'Unknown').upper()
+                                verdict = i.get("Verdict", "Unknown")
                             
-                            icon = "⚪"
-                            if verdict == "Pass": icon = "🟢"
-                            elif verdict == "Partial": icon = "🟡"
-                            elif verdict == "Fail": icon = "🔴"
+                                icon = "⚪"
+                                if verdict == "Pass": icon = "🟢"
+                                elif verdict == "Partial": icon = "🟡"
+                                elif verdict == "Fail": icon = "🔴"
                             
-                            tab_labels.append(f"{eng} {icon}")
+                                tab_labels.append(f"{eng} {icon}")
 
-                        tabs = st.tabs(tab_labels)
+                            tabs = st.tabs(tab_labels)
                         
-                        for t, item in zip(tabs, filtered_items):
-                            with t:
-                                verdict = item.get("Verdict", "Unknown")
-                                score = item.get("Score", 0)
+                            for t, item in zip(tabs, filtered_items):
+                                with t:
+                                    verdict = item.get("Verdict", "Unknown")
+                                    score = item.get("Score", 0)
                                 
-                                # Score Color Logic
-                                score_color = "#e74c3c" # Red
-                                if score >= 80: score_color = "#2ecc71" # Green
-                                elif score >= 50: score_color = "#f1c40f" # Orange
+                                    # Score Color Logic
+                                    score_color = "#e74c3c" # Red
+                                    if score >= 80: score_color = "#2ecc71" # Green
+                                    elif score >= 50: score_color = "#f1c40f" # Orange
                                 
-                                verdict_colors = {
-                                    "Pass": "green", "Fail": "red", "Partial": "orange", "Skipped": "grey", "Unknown": "grey"
-                                }
-                                v_color = verdict_colors.get(verdict, "blue")
+                                    verdict_colors = {
+                                        "Pass": "green", "Fail": "red", "Partial": "orange", "Skipped": "grey", "Unknown": "grey"
+                                    }
+                                    v_color = verdict_colors.get(verdict, "blue")
                                 
-                                # Header
-                                col_h1, col_h2 = st.columns([5, 1])
-                                with col_h1:
-                                    st.markdown(f"**:{v_color}[{verdict.upper()}]**")
-                                with col_h2:
-                                     st.markdown(f"<h3 style='text-align: right; color: {score_color}; margin:0; padding:0;'>{score}</h3>", unsafe_allow_html=True)
+                                    # Header
+                                    col_h1, col_h2 = st.columns([5, 1])
+                                    with col_h1:
+                                        st.markdown(f"**:{v_color}[{verdict.upper()}]**")
+                                    with col_h2:
+                                         st.markdown(f"<h3 style='text-align: right; color: {score_color}; margin:0; padding:0;'>{score}</h3>", unsafe_allow_html=True)
                                 
-                                # Expandable Body
-                                c_a, c_b = st.columns(2)
-                                with c_a:
-                                    with st.expander("Ground Truth", expanded=False):
-                                        truth_text = item.get('Truth')
-                                        if not truth_text:
-                                            st.caption("No truth defined.")
-                                        else:
-                                            st.info(truth_text)
+                                    # Expandable Body
+                                    c_a, c_b = st.columns(2)
+                                    with c_a:
+                                        with st.expander("Ground Truth", expanded=False):
+                                            truth_text = item.get('Truth')
+                                            if not truth_text:
+                                                st.caption("No truth defined.")
+                                            else:
+                                                st.info(truth_text)
                                         
-                                with c_b:
-                                    with st.expander("AI Answer", expanded=False):
-                                        st.code(item.get('AI Response'), language="text", wrap_lines=True)
+                                    with c_b:
+                                        with st.expander("AI Answer", expanded=False):
+                                            st.code(item.get('AI Response'), language="text", wrap_lines=True)
                                 
-                                # Sources Expander
-                                sources = item.get('Sources', [])
-                                source_count = item.get('Source Count', 0)
-                                if sources:
-                                     with st.expander(f"Source URLs ({source_count})", expanded=False):
-                                         st.dataframe(sources, hide_index=True, width="stretch")
+                                    # Sources Expander
+                                    sources = item.get('Sources', [])
+                                    source_count = item.get('Source Count', 0)
+                                    if sources:
+                                         with st.expander(f"Source URLs ({source_count})", expanded=False):
+                                             st.dataframe(sources, hide_index=True, width="stretch")
         
-                                # Analysis Footer (Always visible)
-                                if item.get('Reason'):
-                                     st.markdown(f"**Analysis:** {item.get('Reason')}")
+                                    # Analysis Footer (Always visible)
+                                    if item.get('Reason'):
+                                         st.markdown(f"**Analysis:** {item.get('Reason')}")
+
+    with tab_extract:
+        st.markdown("## ⛏️ Source Extraction")
+        st.info("Extract and aggregate all external sources cited by AI engines for a specific brand and tag.")
+        
+        # We can reuse ACCURANKER_BRANDS from above
+        with st.container(border=True):
+            col_brand, col_tag, col_date = st.columns([1, 1, 1])
+            with col_brand:
+                ext_brand_name = st.selectbox("Select Brand", list(ACCURANKER_BRANDS.keys()), key="ext_brand")
+                ext_brand_id = ACCURANKER_BRANDS[ext_brand_name]
+                
+            with col_tag:
+                accuranker_token = st.secrets.get("ACCURANKER_TOKEN")
+                ext_cache_key = f"tags_{ext_brand_id}"
+                
+                if ext_cache_key not in st.session_state:
+                     with st.spinner("Loading Tags..."):
+                          if accuranker_token:
+                              st.session_state[ext_cache_key] = backend.fetch_unique_tags(ext_brand_id, accuranker_token)
+                          else:
+                              st.session_state[ext_cache_key] = {}
+                
+                tags_map = st.session_state.get(ext_cache_key, {})
+                tag_options = [f"{t} ({c})" for t, c in tags_map.items()]
+                
+                default_ix = 0
+                for i, opt in enumerate(tag_options):
+                    if "Commercial" in opt:
+                        default_ix = i
+                        break
+                    
+                ext_tag_str = st.selectbox("Tag Filter", tag_options, index=default_ix, key="ext_tag") if tag_options else st.text_input("Tag Filter (No tags found)", value="Commercial", key="ext_tag_fallback")
+                ext_tag_clean = ext_tag_str.split(" (")[0] if " (" in str(ext_tag_str) else ext_tag_str
+                
+            with col_date:
+                from datetime import datetime, timedelta
+                seven_days_ago = datetime.today() - timedelta(days=7)
+                date_range = st.date_input("Date Range", value=(seven_days_ago, datetime.today()), max_value=datetime.today())
+                
+        # Filters and Button
+        col_filters, col_btn = st.columns([2, 1])
+        with col_filters:
+            filter_reddit = st.checkbox("Filter out Reddit", value=True, help="Removes sources from reddit.com")
+            filter_brokerchooser = st.checkbox("Filter out BrokerChooser", value=True, help="Removes sources from brokerchooser.com")
+            
+            calc_latest_only = st.checkbox("Calculate using Latest Snapshot only", value=True, help="Aligns with AccuRanker UI. Uncheck to include all snapshots in the date range.")
+            
+            comp_col1, comp_col2, comp_col3 = st.columns([1, 1, 3])
+            with comp_col1:
+                filter_competitors = st.checkbox("Exclude competitors", value=False, help="Removes sources listed in competitors.txt")
+            with comp_col2:
+                with st.popover("See included competitors"):
+                    try:
+                        with open("competitors.txt", "r", encoding="utf-8") as f:
+                            st.code(f.read(), language="text")
+                    except FileNotFoundError:
+                        st.info("competitors.txt not found.")
+            with comp_col3:
+                st.empty()
+            
+        with col_btn:
+             fetch_sources_btn = st.button("Fetch Sources", type="primary", use_container_width=True)
+             
+        if fetch_sources_btn:
+             if len(date_range) != 2:
+                 st.error("Please select both a start and end date.")
+             elif not accuranker_token:
+                 st.error("Missing ACCURANKER_TOKEN in secrets.")
+             else:
+                 start_date, end_date = date_range
+                 with st.spinner(f"Fetching sources for {ext_brand_name} from {start_date} to {end_date}..."):
+                     df_sources = backend.fetch_accuranker_sources(
+                         ext_brand_id,
+                         ext_tag_clean,
+                         start_date,
+                         end_date,
+                         accuranker_token,
+                         calculate_latest_only=calc_latest_only
+                     )
+                     
+                     if df_sources.empty:
+                         st.warning("No sources found for the selected criteria.")
+                         st.session_state.source_extraction_df = None
+                     else:
+                         # Apply Filters
+                         if filter_reddit:
+                             df_sources = df_sources[~df_sources['Domain'].str.contains('reddit.com', case=False, na=False)]
+                         if filter_brokerchooser:
+                             df_sources = df_sources[~df_sources['Domain'].str.contains('brokerchooser.com', case=False, na=False)]
+                         if filter_competitors:
+                             try:
+                                 with open('competitors.txt', 'r', encoding='utf-8') as f:
+                                     competitors = [line.strip().lower() for line in f if line.strip() and not line.startswith('#')]
+                                 if competitors:
+                                     # Filter out any domain that contains any of the competitor strings
+                                     mask = df_sources['Domain'].apply(lambda d: any(comp in str(d).lower() for comp in competitors))
+                                     df_sources = df_sources[~mask]
+                             except FileNotFoundError:
+                                 st.warning("competitors.txt not found in the root directory. Filtering skipped.")
+
+                         # Recalculate percentages after filtering? 
+                         # Usually percentages should be of the *total* prompts, so we might want to keep the original Cited percentage even if we filter.
+                         # Based on user description, filtering out results means they just don't show up in the table.
+                         
+                         st.session_state.source_extraction_df = df_sources
+                         st.success(f"Extracted {len(df_sources)} unique sources.")
+
+        # Display Results
+        if 'source_extraction_df' in st.session_state and st.session_state.source_extraction_df is not None:
+             df_disp = st.session_state.source_extraction_df
+             
+             st.markdown("### Latest Extracted Sources")
+             
+             # CSV Download
+             csv = df_disp.to_csv(index=False).encode('utf-8')
+             st.download_button(
+                 label="⬇️ Download CSV",
+                 data=csv,
+                 file_name=f"{ext_brand_name.replace(' ', '_')}_{ext_tag_clean.replace(' ', '_')}_LLM_Sources.csv",
+                 mime="text/csv",
+             )
+             
+             st.dataframe(
+                 df_disp,
+                 column_config={
+                     "Domain": st.column_config.TextColumn("Domain"),
+                     "Domain Prompts": st.column_config.NumberColumn("Domain Prompts"),
+                     "Domain Cited (%)": st.column_config.ProgressColumn(
+                         "Domain Cited (%)",
+                         format="%.1f%%",
+                         min_value=0,
+                         max_value=100
+                     ),
+                     "Full URL": st.column_config.LinkColumn("Full URL"),
+                     "Prompts": st.column_config.NumberColumn("URL Prompts"),
+                     "URL Cited (%)": st.column_config.ProgressColumn(
+                         "URL Cited (%)",
+                         format="%.1f%%",
+                         min_value=0,
+                         max_value=100
+                     )
+                 },
+                 hide_index=True,
+                 use_container_width=True,
+                 height=600
+             )
 
 # --- PAGE: AI POWERED TOOLS ---
 elif current_page == "AI Powered Tools":

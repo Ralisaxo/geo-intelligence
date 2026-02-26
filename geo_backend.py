@@ -1335,7 +1335,8 @@ def fetch_accuranker_sources(brand_id, tag, start_date, end_date, api_token, cal
     # Filter by tag and process sources
     tag_lower = tag.lower() if tag else None
     
-    source_counts = {} # url -> count
+    source_counts = {} # url -> total engine responses
+    url_counts = {} # url -> count of prompts having AT LEAST ONE occurrence of this url
     domain_prompts = {} # domain -> total engine responses
     domain_counts = {} # domain -> count of promos having AT LEAST ONE url from this domain
     total_matching_prompts = 0
@@ -1394,6 +1395,8 @@ def fetch_accuranker_sources(brand_id, tag, start_date, end_date, api_token, cal
         # Add to global unique keyword counts
         for d in unique_domains_in_prompt:
             domain_counts[d] = domain_counts.get(d, 0) + 1
+        for u in unique_urls_in_prompt:
+            url_counts[u] = url_counts.get(u, 0) + 1
 
     # Format output
     output_data = []
@@ -1409,7 +1412,8 @@ def fetch_accuranker_sources(brand_id, tag, start_date, end_date, api_token, cal
         except Exception:
             domain = "Unknown"
             
-        url_pct = (count / total_matching_prompts * 100) if total_matching_prompts > 0 else 0
+        url_kw_count = url_counts.get(url, 0)
+        url_pct = (url_kw_count / total_matching_prompts * 100) if total_matching_prompts > 0 else 0
         
         # Domain citations: how many prompts cite this domain at least once
         domain_kw_count = domain_counts.get(domain, 0)
