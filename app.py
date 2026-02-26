@@ -2073,14 +2073,31 @@ elif current_page == "LLM Monitoring":
              
              st.markdown("### Latest Extracted Sources")
              
-             # CSV Download
-             csv = df_disp.to_csv(index=False).encode('utf-8')
-             st.download_button(
-                 label="⬇️ Download CSV",
-                 data=csv,
-                 file_name=f"{ext_brand_name.replace(' ', '_')}_{ext_tag_clean.replace(' ', '_')}_LLM_Sources.csv",
-                 mime="text/csv",
-             )
+             # CSV Download Options
+             col_dl1, col_dl2 = st.columns([1, 2])
+             with col_dl1:
+                 csv_format = st.selectbox(
+                     "CSV Export Format", 
+                     ["Standard CSV (, separator, . decimal)", "EU Excel Ready (; separator, , decimal)"], 
+                     key="csv_format_source",
+                     label_visibility="collapsed"
+                 )
+             
+             if "EU Excel" in csv_format:
+                 df_csv = df_disp.copy()
+                 for col in df_csv.select_dtypes(include=['float64', 'float32']).columns:
+                     df_csv[col] = df_csv[col].apply(lambda x: str(x).replace('.', ','))
+                 csv = df_csv.to_csv(index=False, sep=';').encode('utf-8')
+             else:
+                 csv = df_disp.to_csv(index=False).encode('utf-8')
+             
+             with col_dl2:
+                 st.download_button(
+                     label="⬇️ Download CSV",
+                     data=csv,
+                     file_name=f"{ext_brand_name.replace(' ', '_')}_{ext_tag_clean.replace(' ', '_')}_LLM_Sources.csv",
+                     mime="text/csv",
+                 )
              
              st.dataframe(
                  df_disp,
@@ -2278,10 +2295,15 @@ elif current_page == "AI Powered Tools":
                             
                     total_tokens_est = (base_tokens * len(df_flex)) + dynamic_tokens
                     
-                    # Estimate cost: ~$2.50 / 1M input tokens.
                     cost_est = (total_tokens_est / 1_000_000) * 2.50
                     st.info(f"**Estimated API Input Cost:** ~${cost_est:.4f} (Approx. {int(total_tokens_est)} tokens)")
 
+                st.markdown("---")
+                csv_format_flex = st.selectbox(
+                    "CSV Export Format (Select before running)", 
+                    ["Standard CSV (, separator, . decimal)", "EU Excel Ready (; separator, , decimal)"], 
+                    key="csv_format_flex"
+                )
                 if st.button("Run FlexSheet", type="primary"):
                     if not user_prompt:
                         st.error("Please provide a User Prompt.")
@@ -2330,7 +2352,14 @@ elif current_page == "AI Powered Tools":
                             
                         st.dataframe(df_flex)
                         
-                        csv_data = df_flex.to_csv(index=False).encode('utf-8')
+                        if "EU Excel" in csv_format_flex:
+                            df_csv_flex = df_flex.copy()
+                            for col in df_csv_flex.select_dtypes(include=['float64', 'float32']).columns:
+                                df_csv_flex[col] = df_csv_flex[col].apply(lambda x: str(x).replace('.', ','))
+                            csv_data = df_csv_flex.to_csv(index=False, sep=';').encode('utf-8')
+                        else:
+                            csv_data = df_flex.to_csv(index=False).encode('utf-8')
+                            
                         st.download_button(
                             label="Download Updated Data as CSV",
                             data=csv_data,
