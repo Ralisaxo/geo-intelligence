@@ -2469,13 +2469,14 @@ elif current_page == "Random Tools":
 
     with tabs[1]:
         st.markdown("#### URL Classifier")
+        st.info("💡 **Note:** All classifications are made instantly based solely on the URL structure. No external web requests or fetches are performed.")
         
-        # Initialize session state for this tool
         if "classifier_processed" not in st.session_state:
             st.session_state.classifier_processed = False
             st.session_state.classifier_df = None
             st.session_state.classifier_summary = None
             st.session_state.classifier_cat_summary = None
+            st.session_state.classifier_lang_summary = None
             st.session_state.classifier_excel_buffer = None
             
         input_method = st.radio("Input Method", ["Paste URLs", "Upload File (CSV/XLSX)"], horizontal=True)
@@ -2517,6 +2518,7 @@ elif current_page == "Random Tools":
             st.session_state.classifier_df = None
             st.session_state.classifier_summary = None
             st.session_state.classifier_cat_summary = None
+            st.session_state.classifier_lang_summary = None
             st.session_state.classifier_excel_buffer = None
             st.rerun()
             
@@ -2527,19 +2529,23 @@ elif current_page == "Random Tools":
                 with st.spinner(f"Classifying {len(urls_to_process)} URLs..."):
                     markets = [backend.categorize_market(u) for u in urls_to_process]
                     websites = [backend.categorize_website(u) for u in urls_to_process]
+                    languages = [backend.categorize_language(u) for u in urls_to_process]
                     
                     # Ensure original columns are kept and new ones appended at the end
                     df_out = original_df.copy()
                     df_out["Market"] = markets
                     df_out["Website Category"] = websites
+                    df_out["Language"] = languages
                     
                     summary_df = df_out.groupby("Market").size().reset_index(name="Count")
                     summary_category_df = df_out.groupby("Website Category").size().reset_index(name="Count")
+                    summary_lang_df = df_out.groupby("Language").size().reset_index(name="Count")
                     
                     import io
                     excel_buffer = io.BytesIO()
                     with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
                         df_out.to_excel(writer, sheet_name="Categorized_URLs", index=False)
+                        summary_lang_df.to_excel(writer, sheet_name="Language_Summary", index=False)
                         summary_df.to_excel(writer, sheet_name="Market_Summary", index=False)
                         summary_category_df.to_excel(writer, sheet_name="Category_Summary", index=False)
                         
@@ -2547,6 +2553,7 @@ elif current_page == "Random Tools":
                     st.session_state.classifier_df = df_out
                     st.session_state.classifier_summary = summary_df
                     st.session_state.classifier_cat_summary = summary_category_df
+                    st.session_state.classifier_lang_summary = summary_lang_df
                     st.session_state.classifier_excel_buffer = excel_buffer.getvalue()
 
         if st.session_state.classifier_processed:
@@ -2559,10 +2566,12 @@ elif current_page == "Random Tools":
                 
             with c2_c:
                 st.markdown("##### Summaries")
-                sum_tabs_c = st.tabs(["Market Summary", "Category Summary"])
+                sum_tabs_c = st.tabs(["Language Summary", "Market Summary", "Category Summary"])
                 with sum_tabs_c[0]:
-                    st.dataframe(st.session_state.classifier_summary, use_container_width=True)
+                    st.dataframe(st.session_state.classifier_lang_summary, use_container_width=True)
                 with sum_tabs_c[1]:
+                    st.dataframe(st.session_state.classifier_summary, use_container_width=True)
+                with sum_tabs_c[2]:
                     st.dataframe(st.session_state.classifier_cat_summary, use_container_width=True)
                 
             st.download_button(

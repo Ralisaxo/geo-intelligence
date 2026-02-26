@@ -1655,6 +1655,17 @@ def categorize_market(url):
         return "JP"
     return "GL"
 
+def categorize_language(url):
+    u = url.lower()
+    if "bgsaxo.it" in u:
+        return "IT"
+    
+    match = re.search(r'/([a-z]{2})-[a-z]{2,4}(?:/|$)', u)
+    if match:
+        return match.group(1).upper()
+        
+    return "EN"
+
 def categorize_website(url):
     """
     Categorizes a URL based on the Oncrawl segmentation rules for Website Categories.
