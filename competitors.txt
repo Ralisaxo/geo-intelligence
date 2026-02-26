@@ -62,3 +62,5 @@ webull.co.jp
 moomoo.com
 sbifxt.co.jp
 gaikaex.com
+interactivebrokers.com
+traderepublic.com
