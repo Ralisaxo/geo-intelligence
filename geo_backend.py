@@ -1511,11 +1511,11 @@ def verify_accuranker_data(tasks, openai_client, progress_callback=None):
             content = completion.choices[0].message.content
             # Handle potential JSON errors
             try:
-                analysis = json.loads(content)
-                row["Verdict"] = analysis.get("verdict", "Unknown")
-                row["Reason"] = analysis.get("reason", "No reason provided")
-                row["Score"] = analysis.get("score", 0)
-            except json.JSONDecodeError:
+                analysis = json.loads(content) if content else {}
+                row["Verdict"] = analysis.get("verdict", "Unknown") if isinstance(analysis, dict) else "Error"
+                row["Reason"] = analysis.get("reason", "No reason provided") if isinstance(analysis, dict) else "Invalid format"
+                row["Score"] = analysis.get("score", 0) if isinstance(analysis, dict) else 0
+            except (json.JSONDecodeError, TypeError, AttributeError):
                 row["Verdict"] = "Error"
                 row["Reason"] = f"Failed to parse JSON response: {content}"
                 row["Score"] = 0
@@ -1752,3 +1752,107 @@ def categorize_website(url):
     # 3. Fallback
     return "Other"
 
+def fetch_kpi_time_series(brand_id, tag, start_date, end_date, api_token):
+    """
+    Fetches historical KPI data (Visibility and Sentiment) from AccuRanker for a given brand and tag.
+    Returns: A Pandas DataFrame indexed by Date.
+    """
+    if not brand_id or not api_token or not start_date or not end_date:
+        return pd.DataFrame()
+
+    url = f"https://app.accuranker.com/api/v4/brands/{brand_id}/prompts/"
+    headers = {
+        "Authorization": f"Token {api_token}",
+        "Accept": "application/json",
+    }
+    
+    params = {
+        "fields": "id,prompt,tags,results.created_at,results.brands.visibility,results.brands.sentiment,results.brands.is_own",
+        "limit": 1000,
+        "period_from": start_date.strftime("%Y-%m-%d") if hasattr(start_date, 'strftime') else start_date,
+        "period_to": end_date.strftime("%Y-%m-%d") if hasattr(end_date, 'strftime') else end_date
+    }
+    
+    all_prompts = []
+    
+    try:
+        while url:
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            chunk = []
+            if isinstance(data, list):
+                chunk = data
+                url = None
+            elif isinstance(data, dict):
+                chunk = data.get('results', [])
+                url = data.get('next')
+                if url: params = None
+            
+            all_prompts.extend(chunk)
+            
+            if len(all_prompts) > 10000: # Safety
+                break
+
+    except Exception as e:
+        print(f"API Error fetching KPI series: {e}")
+        return pd.DataFrame()
+
+    tag_lower = tag.lower() if tag else None
+    
+    data_by_date = {}
+
+    for p in all_prompts:
+        p_tags = [t.lower() for t in (p.get('tags') or [])]
+        if tag_lower and tag_lower not in p_tags:
+            continue
+            
+        results = p.get('results', [])
+        for r in results:
+            date_str = r.get('created_at', '')[:10]
+            if not date_str:
+                continue
+                
+            brands = r.get('brands', [])
+            for b in brands:
+                if b.get('is_own'):
+                    visi = b.get('visibility')
+                    sent = b.get('sentiment')
+                    
+                    visi = float(visi) if visi is not None else 0.0
+                    sent = float(sent) if sent is not None else 0.0
+                    
+                    if date_str not in data_by_date:
+                        data_by_date[date_str] = {'visi_sum': 0.0, 'visi_count': 0, 'sent_sum': 0.0, 'sent_count': 0}
+                        
+                    data_by_date[date_str]['visi_sum'] += visi
+                    data_by_date[date_str]['visi_count'] += 1
+                    
+                    if visi > 0:
+                        data_by_date[date_str]['sent_sum'] += sent
+                        data_by_date[date_str]['sent_count'] += 1
+                        
+                    break
+                    
+    records = []
+    for date_str, aggs in data_by_date.items():
+        v_count = aggs['visi_count']
+        s_count = aggs['sent_count']
+        
+        if v_count > 0:
+            avg_visi = aggs['visi_sum'] / v_count
+            avg_sent = (aggs['sent_sum'] / s_count) if s_count > 0 else 0.0
+            
+            records.append({
+                'Date': date_str,
+                'Visibility': avg_visi,
+                'Sentiment': avg_sent
+            })
+            
+    df = pd.DataFrame(records)
+    if not df.empty:
+        df['Date'] = pd.to_datetime(df['Date'])
+        df = df.sort_values('Date')
+        
+    return df

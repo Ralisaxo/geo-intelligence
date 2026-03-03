@@ -1581,29 +1581,242 @@ elif current_page == "Reddit Analysis":
 
 # --- PAGE: LLM MONITORING ---
 elif current_page == "LLM Monitoring":
-    tab_truth, tab_extract = st.tabs(["🛡️ LLM Truth Control", "⛏️ Source Extraction"])
-    
+    # Brand Dictionary
+    ACCURANKER_BRANDS = {
+        "GEO Experiments": 10000419,
+        "Saxo BE": 10000083,
+        "Saxo CH": 10000084,
+        "Saxo CZ": 10000085,
+        "Saxo DK": 10000087,
+        "Saxo FR": 10000090,
+        "Saxo Institutional": 10000275,
+        "Saxo IT": 10000092,
+        "Saxo JP": 10000095,
+        "Saxo MENA": 10000120,
+        "Saxo NL": 10000097,
+        "Saxo PL": 10000117,
+        "Saxo SG": 10000124,
+        "Saxo UK": 10000079
+    }
+
+    tab_kpi, tab_truth, tab_extract = st.tabs(["📈 KPI Monitoring", "🛡️ LLM Truth Control", "⛏️ Source Extraction"])
+
+    with tab_kpi:
+        st.markdown("## 📈 KPI Monitoring")
+        st.info("Monitor historical Visibility and Sentiment of AI Search Results.")
+        
+        with st.container(border=True):
+            col_brand, col_comp, col_tag, col_date = st.columns([1, 1, 1, 1])
+            with col_brand:
+                brand_list = list(ACCURANKER_BRANDS.keys())
+                default_brand_ix = brand_list.index("Saxo DK") if "Saxo DK" in brand_list else 0
+                kpi_brand_name = st.selectbox("Select Brand", brand_list, index=default_brand_ix, key="kpi_brand")
+                kpi_brand_id = ACCURANKER_BRANDS[kpi_brand_name]
+                
+            with col_comp:
+                comp_options = ["None"] + list(ACCURANKER_BRANDS.keys())
+                kpi_comp_name = st.selectbox("Compare With (Optional)", comp_options, key="kpi_comp_brand")
+                kpi_comp_id = ACCURANKER_BRANDS.get(kpi_comp_name)
+                
+            with col_tag:
+                accuranker_token = st.secrets.get("ACCURANKER_TOKEN")
+                kpi_cache_key = f"tags_{kpi_brand_id}"
+                
+                if kpi_cache_key not in st.session_state:
+                     with st.spinner("Loading Tags..."):
+                          if accuranker_token:
+                              st.session_state[kpi_cache_key] = backend.fetch_unique_tags(kpi_brand_id, accuranker_token)
+                          else:
+                              st.session_state[kpi_cache_key] = {}
+                
+                tags_map = st.session_state.get(kpi_cache_key, {})
+                tag_options = [f"{t} ({c})" for t, c in tags_map.items()]
+                
+                default_ix = 0
+                for i, opt in enumerate(tag_options):
+                    if "Commercial" in opt:
+                        default_ix = i
+                        break
+                    
+                kpi_tag_str = st.selectbox("Tag Filter", tag_options, index=default_ix, key="kpi_tag") if tag_options else st.text_input("Tag Filter (No tags found)", value="Commercial", key="kpi_tag_fallback")
+                kpi_tag_clean = kpi_tag_str.split(" (")[0] if " (" in str(kpi_tag_str) else kpi_tag_str
+                
+            with col_date:
+                from datetime import datetime, timedelta
+                ninety_days_ago = datetime.today() - timedelta(days=90)
+                date_range = st.date_input("Date Range", value=(ninety_days_ago, datetime.today()), max_value=datetime.today(), key="kpi_date")
+                
+        col_filters, col_vis, col_sen, col_btn = st.columns([1.5, 1, 1, 1])
+        with col_filters:
+            rolling_avg_options = ["None", "Weekly (7-day)", "Monthly (30-day)"]
+            rolling_avg = st.selectbox("Rolling Average", rolling_avg_options, index=1, key="kpi_rolling")
+            
+        with col_vis:
+            st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
+            show_visibility = st.checkbox("Visibility", value=True, key="kpi_show_vis")
+            
+        with col_sen:
+            st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
+            show_sentiment = st.checkbox("Sentiment", value=True, key="kpi_show_sen")
+        
+        with col_btn:
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+            fetch_kpi_btn = st.button("Fetch KPI Data", type="primary", use_container_width=True)
+            
+        if fetch_kpi_btn:
+             if len(date_range) != 2:
+                 st.error("Please select both a start and end date.")
+             elif not accuranker_token:
+                 st.error("Missing ACCURANKER_TOKEN in secrets.")
+             else:
+                 start_date, end_date = date_range
+                 with st.spinner(f"Fetching KPI data from {start_date} to {end_date}..."):
+                     # Fetch primary brand
+                     df_kpi_primary = backend.fetch_kpi_time_series(
+                         kpi_brand_id,
+                         kpi_tag_clean,
+                         start_date,
+                         end_date,
+                         accuranker_token
+                     )
+                     
+                     df_final = pd.DataFrame()
+                     
+                     if not df_kpi_primary.empty:
+                         # Rename columns for clarity
+                         df_kpi_primary = df_kpi_primary.rename(columns={
+                             'Visibility': f'Visibility ({kpi_brand_name})', 
+                             'Sentiment': f'Sentiment ({kpi_brand_name})'
+                         })
+                         df_final = df_kpi_primary
+                         
+                         # Fetch comparison brand if selected
+                         if kpi_comp_id:
+                             df_kpi_comp = backend.fetch_kpi_time_series(
+                                 kpi_comp_id,
+                                 kpi_tag_clean,
+                                 start_date,
+                                 end_date,
+                                 accuranker_token
+                             )
+                             if not df_kpi_comp.empty:
+                                 df_kpi_comp = df_kpi_comp.rename(columns={
+                                     'Visibility': f'Visibility ({kpi_comp_name})', 
+                                     'Sentiment': f'Sentiment ({kpi_comp_name})'
+                                 })
+                                 # Merge the two DataFrames on Date
+                                 df_final = pd.merge(df_kpi_primary, df_kpi_comp, on='Date', how='outer')
+                                 df_final = df_final.sort_values('Date')
+                     
+                     if df_final.empty:
+                         st.warning("No KPI data found for the selected criteria.")
+                         st.session_state.kpi_series_df = None
+                         st.session_state.kpi_chart_meta = None
+                     else:
+                         st.session_state.kpi_series_df = df_final
+                         st.session_state.kpi_chart_meta = {
+                             'primary_vis': f'Visibility ({kpi_brand_name})',
+                             'primary_sen': f'Sentiment ({kpi_brand_name})',
+                             'comp_vis': f'Visibility ({kpi_comp_name})' if kpi_comp_id else None,
+                             'comp_sen': f'Sentiment ({kpi_comp_name})' if kpi_comp_id else None,
+                         }
+                         st.success("Fetched KPI Data.")
+
+        if 'kpi_series_df' in st.session_state and st.session_state.kpi_series_df is not None:
+            df_plot = st.session_state.kpi_series_df.copy()
+            meta = st.session_state.kpi_chart_meta
+            
+            val_columns = [c for c in df_plot.columns if c != 'Date']
+            
+            # Apply rolling average if selected
+            if rolling_avg == "Weekly (7-day)":
+                for c in val_columns:
+                    df_plot[c] = df_plot[c].rolling(window=7, min_periods=1).mean()
+            elif rolling_avg == "Monthly (30-day)":
+                for c in val_columns:
+                    df_plot[c] = df_plot[c].rolling(window=30, min_periods=1).mean()
+                
+            st.markdown("### Visibility & Sentiment Trends")
+            
+            # --- Custom HTML Legend ---
+            legend_html = "<div style='display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 20px; font-size: 14px; align-items: center;'>"
+            
+            if show_visibility:
+                legend_html += f"<div style='display: flex; align-items: center;'><span style='display: inline-block; width: 25px; height: 3px; background-color: #2ecc71; margin-right: 8px;'></span> {meta['primary_vis']}</div>"
+                
+            if show_sentiment:
+                legend_html += f"<div style='display: flex; align-items: center;'><span style='display: inline-block; width: 25px; height: 3px; background-color: #e74c3c; margin-right: 8px;'></span> {meta['primary_sen']}</div>"
+                
+            if kpi_comp_id and meta['comp_vis']:
+                if show_visibility:
+                    legend_html += f"<div style='display: flex; align-items: center;'><span style='display: inline-block; width: 25px; border-top: 3px dashed #27ae60; margin-right: 8px;'></span> {meta['comp_vis']}</div>"
+                    
+                if show_sentiment:
+                    legend_html += f"<div style='display: flex; align-items: center;'><span style='display: inline-block; width: 25px; border-top: 3px dashed #c0392b; margin-right: 8px;'></span> {meta['comp_sen']}</div>"
+            
+            legend_html += "</div>"
+            st.markdown(legend_html, unsafe_allow_html=True)
+            
+            # Altair Dual Axis Chart - Base Component
+            base = alt.Chart(df_plot).encode(
+                x=alt.X('Date:T', axis=alt.Axis(title='Date'))
+            )
+            
+            # We remove resolve_scale(y='independent') which separates every single layer.
+            # Instead, Altair automatically links axes with the same field names. However, since they have different names like "Visibility (Saxo BE)" vs "Visibility (Saxo UK)", 
+            # we need to map the secondary charts to use the exact same axis title object as the first ones to force merging.
+            
+            layers = []
+            
+            # Primary lines
+            if show_visibility:
+                layers.append(
+                    base.mark_line(color='#2ecc71', strokeWidth=3).encode(
+                        y=alt.Y(f"{meta['primary_vis']}:Q", scale=alt.Scale(zero=True), axis=alt.Axis(title='Visibility (%)', titleColor='#2ecc71')),
+                        tooltip=['Date', alt.Tooltip(f"{meta['primary_vis']}:Q", format='.2f')]
+                    )
+                )
+                
+            if show_sentiment:
+                layers.append(
+                    base.mark_line(color='#e74c3c', strokeWidth=3).encode(
+                        y=alt.Y(f"{meta['primary_sen']}:Q", scale=alt.Scale(zero=True), axis=alt.Axis(title='Sentiment Score', titleColor='#e74c3c')),
+                        tooltip=['Date', alt.Tooltip(f"{meta['primary_sen']}:Q", format='.2f')]
+                    )
+                )
+            
+            # Secondary (Comparison) lines if data exists
+            if show_visibility and meta['comp_vis'] and meta['comp_vis'] in df_plot.columns:
+                layers.append(
+                    base.mark_line(color='#27ae60', strokeWidth=3, strokeDash=[5, 5]).encode(
+                        y=alt.Y(f"{meta['comp_vis']}:Q", scale=alt.Scale(zero=True), axis=alt.Axis(title=None)),
+                        tooltip=['Date', alt.Tooltip(f"{meta['comp_vis']}:Q", format='.2f')]
+                    )
+                )
+            if show_sentiment and meta['comp_sen'] and meta['comp_sen'] in df_plot.columns:
+                layers.append(
+                    base.mark_line(color='#c0392b', strokeWidth=3, strokeDash=[5, 5]).encode(
+                        y=alt.Y(f"{meta['comp_sen']}:Q", scale=alt.Scale(zero=True), axis=alt.Axis(title=None)),
+                        tooltip=['Date', alt.Tooltip(f"{meta['comp_sen']}:Q", format='.2f')]
+                    )
+                )
+            
+            if layers:
+                chart = alt.layer(*layers).resolve_scale(
+                    y='shared'
+                ).properties(
+                    height=400
+                ).interactive()
+                
+                st.altair_chart(chart, use_container_width=True)
+            else:
+                st.warning("Please select at least one metric to visualize.")
+            
+            st.dataframe(df_plot, use_container_width=True, hide_index=True)
+            
     with tab_truth:
         st.markdown("## 🛡️ LLM Truth Control")
         st.info("Verify if AI search results verify the 'Ground Truth' defined in AccuRanker.")
-
-        # Brand Dictionary
-        ACCURANKER_BRANDS = {
-            "GEO Experiments": 10000419,
-            "Saxo BE": 10000083,
-            "Saxo CH": 10000084,
-            "Saxo CZ": 10000085,
-            "Saxo DK": 10000087,
-            "Saxo FR": 10000090,
-            "Saxo Institutional": 10000275,
-            "Saxo IT": 10000092,
-            "Saxo JP": 10000095,
-            "Saxo MENA": 10000120,
-            "Saxo NL": 10000097,
-            "Saxo PL": 10000117,
-            "Saxo SG": 10000124,
-            "Saxo UK": 10000079
-        }
 
         # Controls
         with st.container(border=True):
@@ -2335,10 +2548,10 @@ elif current_page == "AI Powered Tools":
                             
                             if is_json_mode and output_columns:
                                 try:
-                                    parsed_json = json.loads(res)
+                                    parsed_json = json.loads(res) if res else {}
                                     for col in output_columns:
                                         df_flex.at[idx, col] = parsed_json.get(col, "JSON Error")
-                                except json.JSONDecodeError:
+                                except (json.JSONDecodeError, TypeError, AttributeError):
                                     for col in output_columns:
                                         df_flex.at[idx, col] = "JSON Error"
                             else:
