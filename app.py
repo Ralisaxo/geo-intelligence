@@ -2978,11 +2978,28 @@ elif current_page == "Random Tools":
                             
                             st.session_state.ahrefs_df = df_ahrefs
                             st.session_state.ahrefs_processed = True
+                            
+                            import re
+                            date_matches = re.findall(r'\d{4}-\d{2}-\d{2}', ahrefs_file.name)
+                            if date_matches:
+                                if len(date_matches) == 2:
+                                    date_str = f"**Comparing Dates:** {date_matches[0]} vs {date_matches[1]}"
+                                elif len(date_matches) == 1:
+                                    date_str = f"**Date:** {date_matches[0]}"
+                                else:
+                                    date_str = f"**Dates:** {', '.join(date_matches)}"
+                                st.session_state.ahrefs_comparison_dates = date_str
+                            else:
+                                st.session_state.ahrefs_comparison_dates = None
+                                
                             st.success("Successfully processed Ahrefs export!")
                 except Exception as e:
                     st.error(f"Error processing the Ahrefs CSV file: {e}")
                     
         if st.session_state.ahrefs_processed and st.session_state.ahrefs_df is not None:
+            if st.session_state.get("ahrefs_comparison_dates"):
+                st.info(f"📅 {st.session_state.ahrefs_comparison_dates} (Parsed from filename)")
+                
             df = st.session_state.ahrefs_df
             
             view_tab1, view_tab3 = st.tabs(["🌍 Market Performance", "📁 Category Performance"])
@@ -3003,6 +3020,54 @@ elif current_page == "Random Tools":
                         intensity = 0.05 + 0.45 * (val / min_val) if min_val < 0 else 0.5
                         styles.append(f'background-color: rgba(231, 76, 60, {intensity:.2f});')
                 return styles
+
+            # --- AI Analysis Integration Platform (Isolated Fragment) ---
+            @st.fragment
+            def render_ai_block(group_col, grouped_table):
+                st.markdown("#### 🤖 AI Strategic Analysis")
+                ai_state_key = f"ai_analysis_{group_col}"
+                
+                if ai_state_key in st.session_state:
+                    st.info(st.session_state[ai_state_key]["text"], icon="🧠")
+                    st.caption(f"Estimated Cost: ${st.session_state[ai_state_key]['cost']:.4f} (~{st.session_state[ai_state_key]['tokens']} input tokens)")
+                    if st.button("Clear AI Analysis", key=f"btn_clear_ai_{group_col}"):
+                        del st.session_state[ai_state_key]
+                        st.rerun(scope="fragment")
+                else:
+                    if st.button("Generate Strategic Analysis", key=f"btn_ai_ahrefs_{group_col}"):
+                        with st.spinner("Analyzing data with GPT-4o..."):
+                            try:
+                                md_table = grouped_table.to_csv(index=False)
+                                prompt_path = "prompts/ahrefs_analysis_system.txt"
+                                try:
+                                    with open(prompt_path, "r", encoding="utf-8") as f:
+                                        sys_prompt = f.read()
+                                except FileNotFoundError:
+                                    sys_prompt = "Analyze this Ahrefs Top Pages data table and provide strategic SEO insights."
+                                    
+                                date_context = ""
+                                if st.session_state.get("ahrefs_comparison_dates"):
+                                    date_context = f"\n\n{st.session_state.ahrefs_comparison_dates}\n\n"
+                                    
+                                user_prompt = f"Here is the data table:\n\n{md_table}"
+                                in_tokens, est_cost = estimate_tokens_and_cost([sys_prompt, date_context, user_prompt])
+                                
+                                response = client.chat.completions.create(
+                                    model="gpt-4o",
+                                    messages=[
+                                        {"role": "system", "content": sys_prompt + date_context},
+                                        {"role": "user", "content": user_prompt}
+                                    ],
+                                    temperature=0.7,
+                                    max_tokens=1000,
+                                    stream=True
+                                )
+                                
+                                analysis_text = st.write_stream(response)
+                                st.session_state[ai_state_key] = {"text": analysis_text, "cost": est_cost, "tokens": in_tokens}
+                                st.rerun(scope="fragment")
+                            except Exception as e:
+                                st.error(f"Error generating AI analysis: {e}")
 
             def render_ahrefs_view(df_view, group_col):
                 if df_view.empty:
@@ -3025,6 +3090,9 @@ elif current_page == "Random Tools":
                 
                 # Display dataframe
                 st.dataframe(styled_grouped, width="stretch", hide_index=True)
+                
+                # Render the isolated fragment block right here
+                render_ai_block(group_col, grouped)
                 
                 st.markdown("##### Traffic Change Visualized")
                 
@@ -3123,7 +3191,7 @@ elif current_page == "Random Tools":
                         tooltip=["URL", "Traffic change", "Keywords change", "UR", "Market", "Website Category"]
                     ).properties(height=400)
                     st.altair_chart(chart_url_ur, width="stretch")
-                
+                    
             with view_tab1:
                 st.markdown("### Market Performance")
                 c1, c2 = st.columns(2)
