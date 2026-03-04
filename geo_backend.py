@@ -1292,44 +1292,49 @@ def fetch_accuranker_sources(brand_id, tag, start_date, end_date, api_token, cal
     if not brand_id or not api_token or not start_date or not end_date:
         return pd.DataFrame()
 
-    url = f"https://app.accuranker.com/api/v4/brands/{brand_id}/prompts/"
-    headers = {
-        "Authorization": f"Token {api_token}",
-        "Accept": "application/json",
-    }
-    
-    # We need created_at to filter dates properly, and engine to count responses per engine
-    params = {
-        "fields": "id,prompt,tags,results.created_at,results.engine,results.sources.url",
-        "limit": 1000,
-        "period_from": start_date.strftime("%Y-%m-%d") if hasattr(start_date, 'strftime') else start_date,
-        "period_to": end_date.strftime("%Y-%m-%d") if hasattr(end_date, 'strftime') else end_date
-    }
-    
+    brand_ids = brand_id if isinstance(brand_id, list) else [brand_id]
     all_prompts = []
-    
-    try:
-        while url:
-            response = requests.get(url, headers=headers, params=params)
-            response.raise_for_status()
-            data = response.json()
-            
-            chunk = []
-            if isinstance(data, list):
-                chunk = data
-                url = None
-            elif isinstance(data, dict):
-                chunk = data.get('results', [])
-                url = data.get('next')
-                if url: params = None
-            
-            all_prompts.extend(chunk)
-            
-            if len(all_prompts) > 10000: # Safety
-                break
 
-    except Exception as e:
-        print(f"API Error fetching sources: {e}")
+    for b_id in brand_ids:
+        url = f"https://app.accuranker.com/api/v4/brands/{b_id}/prompts/"
+        headers = {
+            "Authorization": f"Token {api_token}",
+            "Accept": "application/json",
+        }
+        
+        # We need created_at to filter dates properly, and engine to count responses per engine
+        params = {
+            "fields": "id,prompt,tags,results.created_at,results.engine,results.sources.url",
+            "limit": 1000,
+            "period_from": start_date.strftime("%Y-%m-%d") if hasattr(start_date, 'strftime') else start_date,
+            "period_to": end_date.strftime("%Y-%m-%d") if hasattr(end_date, 'strftime') else end_date
+        }
+        
+        try:
+            while url:
+                response = requests.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                data = response.json()
+                
+                chunk = []
+                if isinstance(data, list):
+                    chunk = data
+                    url = None
+                elif isinstance(data, dict):
+                    chunk = data.get('results', [])
+                    url = data.get('next')
+                    if url: params = None
+                
+                all_prompts.extend(chunk)
+                
+                if len(all_prompts) > 10000: # Safety
+                    break
+
+        except Exception as e:
+            print(f"API Error fetching sources for brand {b_id}: {e}")
+            continue
+
+    if not all_prompts:
         return pd.DataFrame()
 
     # Filter by tag and process sources

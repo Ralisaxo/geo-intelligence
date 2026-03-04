@@ -2317,17 +2317,23 @@ elif current_page == "LLM Monitoring":
         with st.container(border=True):
             col_brand, col_tag, col_date = st.columns([1, 1, 1])
             with col_brand:
-                ext_brand_name = st.selectbox("Select Brand", list(ACCURANKER_BRANDS.keys()), key="ext_brand")
-                ext_brand_id = ACCURANKER_BRANDS[ext_brand_name]
+                brand_options = ["All Brands (Excl. GEO/Inst)"] + list(ACCURANKER_BRANDS.keys())
+                ext_brand_name = st.selectbox("Select Brand", brand_options, index=1, key="ext_brand")
+                if ext_brand_name == "All Brands (Excl. GEO/Inst)":
+                    ext_brand_id = [v for k, v in ACCURANKER_BRANDS.items() if k not in ["GEO Experiments", "Saxo Institutional"]]
+                    tag_brand_id = ACCURANKER_BRANDS.get("Saxo DK", 10000087)
+                else:
+                    ext_brand_id = ACCURANKER_BRANDS[ext_brand_name]
+                    tag_brand_id = ext_brand_id
                 
             with col_tag:
                 accuranker_token = st.secrets.get("ACCURANKER_TOKEN")
-                ext_cache_key = f"tags_{ext_brand_id}"
+                ext_cache_key = f"tags_{tag_brand_id}"
                 
                 if ext_cache_key not in st.session_state:
                      with st.spinner("Loading Tags..."):
                           if accuranker_token:
-                              st.session_state[ext_cache_key] = backend.fetch_unique_tags(ext_brand_id, accuranker_token)
+                              st.session_state[ext_cache_key] = backend.fetch_unique_tags(tag_brand_id, accuranker_token)
                           else:
                               st.session_state[ext_cache_key] = {}
                 
@@ -2421,6 +2427,23 @@ elif current_page == "LLM Monitoring":
              df_disp = st.session_state.source_extraction_df
              
              st.markdown("### Latest Extracted Sources")
+             
+             # Bar Chart visualization
+             df_chart = df_disp[['Domain', 'Domain Cited (%)']].drop_duplicates()
+             if not df_chart.empty:
+                 max_domains = len(df_chart)
+                 num_results = st.slider("Number of domains to show in chart", min_value=1, max_value=max_domains, value=min(50, max_domains))
+                 df_chart_filtered = df_chart.head(num_results)
+
+                 chart = alt.Chart(df_chart_filtered).mark_bar(color='#3498db').encode(
+                     x=alt.X('Domain:N', sort='-y', axis=alt.Axis(labelAngle=-45, title='Domain')),
+                     y=alt.Y('Domain Cited (%):Q', title='Domain Cited (%)'),
+                     tooltip=['Domain', alt.Tooltip('Domain Cited (%):Q', format='.1f')]
+                 ).properties(
+                     height=400
+                 ).interactive()
+                 st.altair_chart(chart, use_container_width=True)
+                 st.markdown("---")
              
              # CSV Download Options
              col_dl1, col_dl2 = st.columns([1, 2])
