@@ -564,7 +564,7 @@ elif current_page == "Semantic Triples":
 
                 # Action Buttons
                 st.write("") # Spacer
-                calc_btn = st.button("Calculate Match", type="primary", use_container_width=True)
+                calc_btn = st.button("Calculate Match", type="primary", width="stretch")
 
                 # Logic: Auto-Clear on Statement Change
                 if 'last_statement_a' not in st.session_state:
@@ -752,7 +752,7 @@ elif current_page == "Semantic Triples":
                                 )
                                 chart_final = points + text
 
-                            st.altair_chart(chart_final.interactive(), use_container_width=True)
+                            st.altair_chart(chart_final.interactive(), width="stretch")
 
                     elif len(valid_history) > 0:
                         st.info("⚠️ Add more data points (at least 2) to visualize the semantic space.")
@@ -914,7 +914,7 @@ elif current_page == "Semantic Triples":
 
                     st.dataframe(
                         df_history.style.map(style_sentiment, subset=['Sentiment']),
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True,
                         column_config=col_config
                     )
@@ -942,17 +942,17 @@ elif current_page == "Semantic Triples":
                 st.markdown("**Mode**")
                 b1, b2, b3 = st.columns(3)
 
-                if b1.button("Inside-Out", use_container_width=True, help="Adjectives for specific brand"):
+                if b1.button("Inside-Out", width="stretch", help="Adjectives for specific brand"):
                     st.session_state['prompt_mode'] = 'inside_out'
                     st.session_state['prompts_content'] = "\n".join(QUESTIONS_INSIDE_OUT)
                     st.rerun()
 
-                if b2.button("Outside-In", use_container_width=True, help="Category questions"):
+                if b2.button("Outside-In", width="stretch", help="Category questions"):
                     st.session_state['prompt_mode'] = 'outside_in'
                     st.session_state['prompts_content'] = "\n".join(QUESTIONS_OUTSIDE_IN)
                     st.rerun()
 
-                if b3.button("Custom", use_container_width=True):
+                if b3.button("Custom", width="stretch"):
                     st.session_state['prompt_mode'] = 'custom'
                     st.session_state['prompts_content'] = ""
                     st.rerun()
@@ -1349,7 +1349,7 @@ elif current_page == "Reddit Analysis":
                                         "ID": p.get('id'),
                                         "Tags": ", ".join(p.get('tags', []))
                                     })
-                                st.dataframe(prompt_data, use_container_width=True)
+                                st.dataframe(prompt_data, width="stretch")
                             else:
                                 st.write("No ID details available.")
 
@@ -1402,13 +1402,13 @@ elif current_page == "Reddit Analysis":
                                      st.warning("Please tick off at least one thread to analyze.")
 
                          with col2:
-                             if st.button("Select All", use_container_width=True):
+                             if st.button("Select All", width="stretch"):
                                  st.session_state['accuranker_data'].loc[:, 'Select'] = True
                                  st.session_state['editor_key'] += 1
                                  st.rerun()
 
                          with col3:
-                             if st.button("Deselect All", use_container_width=True):
+                             if st.button("Deselect All", width="stretch"):
                                  st.session_state['accuranker_data'].loc[:, 'Select'] = False
                                  st.session_state['editor_key'] += 1
                                  st.rerun()
@@ -1599,7 +1599,7 @@ elif current_page == "LLM Monitoring":
         "Saxo UK": 10000079
     }
 
-    tab_kpi, tab_truth, tab_extract = st.tabs(["📈 KPI Monitoring", "🛡️ LLM Truth Control", "⛏️ Source Extraction"])
+    tab_kpi, tab_cross_market, tab_truth, tab_extract = st.tabs(["📈 KPI Monitoring", "🌍 Cross Market Analysis", "🛡️ LLM Truth Control", "⛏️ Source Extraction"])
 
     with tab_kpi:
         st.markdown("## 📈 KPI Monitoring")
@@ -1661,7 +1661,7 @@ elif current_page == "LLM Monitoring":
         
         with col_btn:
             st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-            fetch_kpi_btn = st.button("Fetch KPI Data", type="primary", use_container_width=True)
+            fetch_kpi_btn = st.button("Fetch KPI Data", type="primary", width="stretch")
             
         if fetch_kpi_btn:
              if len(date_range) != 2:
@@ -1808,11 +1808,147 @@ elif current_page == "LLM Monitoring":
                     height=400
                 ).interactive()
                 
-                st.altair_chart(chart, use_container_width=True)
+                st.altair_chart(chart, width="stretch")
             else:
                 st.warning("Please select at least one metric to visualize.")
             
-            st.dataframe(df_plot, use_container_width=True, hide_index=True)
+            st.dataframe(df_plot, width="stretch", hide_index=True)
+            
+    with tab_cross_market:
+        st.markdown("## 🌍 Cross Market Analysis")
+        st.info("Analyze aggregate KPI data across multiple brands broken down by LLM.")
+        
+        with st.container(border=True):
+            st.markdown("### Select Brands")
+            # Create a horizontal layout for checkboxes
+            cols = st.columns(4)
+            selected_brands_for_cross = []
+            
+            brand_items = list(ACCURANKER_BRANDS.keys())
+            for i, brand_name in enumerate(brand_items):
+                col = cols[i % 4]
+                # Default true except for GEO Experiments and Saxo Institutional
+                default_val = brand_name not in ["GEO Experiments", "Saxo Institutional"]
+                with col:
+                    if st.checkbox(brand_name, value=default_val, key=f"cross_market_{brand_name}"):
+                        selected_brands_for_cross.append(brand_name)
+                        
+            st.markdown("---")
+            
+            col_tag, col_date, col_btn = st.columns([1, 1, 1])
+            with col_tag:
+                accuranker_token = st.secrets.get("ACCURANKER_TOKEN")
+                default_brand_id = ACCURANKER_BRANDS.get("Saxo DK", 10000087)
+                cross_cache_key = f"tags_{default_brand_id}"
+                
+                if cross_cache_key not in st.session_state:
+                     with st.spinner("Loading Tags..."):
+                          if accuranker_token:
+                              st.session_state[cross_cache_key] = backend.fetch_unique_tags(default_brand_id, accuranker_token)
+                          else:
+                              st.session_state[cross_cache_key] = {}
+                
+                tags_map = st.session_state.get(cross_cache_key, {})
+                tag_options = [f"{t} ({c})" for t, c in tags_map.items()]
+                
+                default_ix = 0
+                for i, opt in enumerate(tag_options):
+                    if "Commercial" in opt:
+                        default_ix = i
+                        break
+                    
+                cross_tag_str = st.selectbox("Tag Filter", tag_options, index=default_ix, key="cross_tag") if tag_options else st.text_input("Tag Filter (No tags found)", value="Commercial", key="cross_tag_fallback")
+                cross_tag_clean = cross_tag_str.split(" (")[0] if " (" in str(cross_tag_str) else cross_tag_str
+                
+            with col_date:
+                from datetime import datetime, timedelta
+                ninety_days_ago = datetime.today() - timedelta(days=90)
+                cross_date_range = st.date_input("Date Range", value=(ninety_days_ago, datetime.today()), max_value=datetime.today(), key="cross_date")
+                
+            with col_btn:
+                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                fetch_cross_btn = st.button("Fetch Market Data", type="primary", width="stretch")
+                
+        if fetch_cross_btn:
+            if len(cross_date_range) != 2:
+                st.error("Please select both a start and end date.")
+            elif not accuranker_token:
+                st.error("Missing ACCURANKER_TOKEN in secrets.")
+            elif not selected_brands_for_cross:
+                st.error("Please select at least one brand.")
+            else:
+                start_date, end_date = cross_date_range
+                all_records = []
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for idx, brand in enumerate(selected_brands_for_cross):
+                    status_text.text(f"Fetching data for {brand}...")
+                    b_id = ACCURANKER_BRANDS[brand]
+                    
+                    market_data = backend.fetch_cross_market_data(
+                        b_id,
+                        cross_tag_clean,
+                        start_date,
+                        end_date,
+                        accuranker_token
+                    )
+                    
+                    for engine, metrics in market_data.items():
+                        all_records.append({
+                            "Brand": brand,
+                            "LLM Engine": engine,
+                            "Visibility (%)": round(metrics['Visibility'], 2),
+                            "Sentiment Score": round(metrics['Sentiment'], 2),
+                            "Web Search Rate (%)": round(metrics['Web Search Rate'], 2)
+                        })
+                        
+                    progress_bar.progress((idx + 1) / len(selected_brands_for_cross))
+                    
+                status_text.empty()
+                progress_bar.empty()
+                
+                if not all_records:
+                    st.warning("No data found for the selected criteria.")
+                    st.session_state.cross_market_df = None
+                else:
+                    df_cross = pd.DataFrame(all_records)
+                    st.session_state.cross_market_df = df_cross
+                    st.success("Fetched Cross Market Data.")
+                    
+        if 'cross_market_df' in st.session_state and st.session_state.cross_market_df is not None:
+            df_disp = st.session_state.cross_market_df.copy()
+            st.markdown("### Cross Market Performance by LLM")
+            st.dataframe(df_disp, width="stretch", hide_index=True)
+            
+            st.markdown("---")
+            # CSV Download Options
+            col_csv1, col_csv2 = st.columns([2, 1])
+            with col_csv1:
+                csv_format = st.selectbox(
+                    "CSV Export Format", 
+                    ["Standard CSV (, separator, . decimal)", "EU Excel Ready (; separator, , decimal)"], 
+                    key="csv_format_cross"
+                )
+            with col_csv2:
+                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                
+                if "EU Excel" in csv_format:
+                    df_csv = df_disp.copy()
+                    for col in df_csv.select_dtypes(include=['float64', 'float32']).columns:
+                        df_csv[col] = df_csv[col].apply(lambda x: str(x).replace('.', ','))
+                    csv_bytes = df_csv.to_csv(index=False, sep=';').encode('utf-8')
+                else:
+                    csv_bytes = df_disp.to_csv(index=False).encode('utf-8')
+                    
+                st.download_button(
+                    label="⬇️ Download CSV",
+                    data=csv_bytes,
+                    file_name=f"Cross_Market_{cross_tag_clean.replace(' ', '_')}.csv",
+                    mime="text/csv",
+                    key="cross_market_download"
+                )
             
     with tab_truth:
         st.markdown("## 🛡️ LLM Truth Control")
@@ -1870,7 +2006,7 @@ elif current_page == "LLM Monitoring":
 
             # 1. FETCH STAGE
             st.write("")
-            if st.button("Fetch Prompts", type="primary", use_container_width=False, help="Fetch latest prompts from AccuRanker"):
+            if st.button("Fetch Prompts", type="primary", width="content", help="Fetch latest prompts from AccuRanker"):
                 if not accuranker_token:
                     st.error("Missing ACCURANKER_TOKEN in secrets.")
                 else:
@@ -1907,12 +2043,12 @@ elif current_page == "LLM Monitoring":
                 # Helper Buttons
                 c_sel1, c_sel2, c_spacer = st.columns([1, 1, 8])
                 with c_sel1:
-                    if st.button("Select All", use_container_width=True):
+                    if st.button("Select All", width="stretch"):
                         st.session_state.selection_df["Select"] = True
                         st.session_state['verification_key'] = st.session_state.get('verification_key', 0) + 1
                         st.rerun()
                 with c_sel2:
-                    if st.button("Unselect All", use_container_width=True):
+                    if st.button("Unselect All", width="stretch"):
                         st.session_state.selection_df["Select"] = False
                         st.session_state['verification_key'] = st.session_state.get('verification_key', 0) + 1
                         st.rerun()
@@ -2073,7 +2209,7 @@ elif current_page == "LLM Monitoring":
                             "Source Count": st.column_config.NumberColumn("Sources", help="Count of source URLs"),
                             "Sources": None, # Hide raw sources
                         },
-                        use_container_width=True,
+                        width="stretch",
                         hide_index=True
                     )
                 
@@ -2234,7 +2370,7 @@ elif current_page == "LLM Monitoring":
                 st.empty()
             
         with col_btn:
-             fetch_sources_btn = st.button("Fetch Sources", type="primary", use_container_width=True)
+             fetch_sources_btn = st.button("Fetch Sources", type="primary", width="stretch")
              
         if fetch_sources_btn:
              if len(date_range) != 2:
@@ -2333,7 +2469,7 @@ elif current_page == "LLM Monitoring":
                      )
                  },
                  hide_index=True,
-                 use_container_width=True,
+                 width="stretch",
                  height=600
              )
 
@@ -2347,7 +2483,7 @@ elif current_page == "AI Powered Tools":
         with col_title:
             st.markdown("#### 📓 AI FlexSheet")
         with col_clear:
-            if st.button("🧹 Clear All", use_container_width=True):
+            if st.button("🧹 Clear All", width="stretch"):
                 # Clear everything related to flexsheet
                 for key in list(st.session_state.keys()):
                     if "flex" in key:
@@ -2429,7 +2565,7 @@ elif current_page == "AI Powered Tools":
                         # Create 4 columns, plus a 5th spacer column to push them left if there aren't 4 items
                         cols = st.columns(4)
                         for j, col_name in enumerate(chunk):
-                            if cols[j].button(f"➕ [{col_name}]", key=f"btn_var_{col_name}_{i}_{j}", use_container_width=True):
+                            if cols[j].button(f"➕ [{col_name}]", key=f"btn_var_{col_name}_{i}_{j}", width="stretch"):
                                 st.session_state.flex_prompt += f" [{col_name}]"
                                 st.rerun()
                             
@@ -2443,7 +2579,7 @@ elif current_page == "AI Powered Tools":
                             custom_cols_input = st.text_input("Define JSON Output Keys (comma-separated). Press Enter or click Add! 👇", placeholder="e.g. title, summary, score")
                         with col_btn:
                             st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
-                            st.button("Add", use_container_width=True, key="add_json_keys_btn")
+                            st.button("Add", width="stretch", key="add_json_keys_btn")
                             
                         if custom_cols_input:
                             output_columns = [x.strip() for x in custom_cols_input.split(",") if x.strip()]
@@ -2582,7 +2718,7 @@ elif current_page == "AI Powered Tools":
 
 # --- PAGE: RANDOM TOOLS ---
 elif current_page == "Random Tools":
-    tabs = st.tabs(["Sitemap Checker", "URL Classifier"])
+    tabs = st.tabs(["Sitemap Checker", "URL Classifier", "Ahrefs Top Pages Visualizer"])
     
     with tabs[0]:
         st.markdown("#### Sitemap Checker")
@@ -2663,15 +2799,15 @@ elif current_page == "Random Tools":
             c1, c2 = st.columns([2, 1])
             with c1:
                 st.markdown("##### Extracted URLs")
-                st.dataframe(st.session_state.sitemap_df, use_container_width=True)
+                st.dataframe(st.session_state.sitemap_df, width="stretch")
                 
             with c2:
                 st.markdown("##### Summaries")
                 sum_tabs = st.tabs(["Market Summary", "Category Summary"])
                 with sum_tabs[0]:
-                    st.dataframe(st.session_state.sitemap_summary, use_container_width=True)
+                    st.dataframe(st.session_state.sitemap_summary, width="stretch")
                 with sum_tabs[1]:
-                    st.dataframe(st.session_state.sitemap_category_summary, use_container_width=True)
+                    st.dataframe(st.session_state.sitemap_category_summary, width="stretch")
                 
             st.download_button(
                 label="Download Excel File",
@@ -2775,21 +2911,261 @@ elif current_page == "Random Tools":
             c1_c, c2_c = st.columns([2, 1])
             with c1_c:
                 st.markdown("##### Categorized Data")
-                st.dataframe(st.session_state.classifier_df, use_container_width=True)
+                st.dataframe(st.session_state.classifier_df, width="stretch")
                 
             with c2_c:
                 st.markdown("##### Summaries")
                 sum_tabs_c = st.tabs(["Language Summary", "Market Summary", "Category Summary"])
                 with sum_tabs_c[0]:
-                    st.dataframe(st.session_state.classifier_lang_summary, use_container_width=True)
+                    st.dataframe(st.session_state.classifier_lang_summary, width="stretch")
                 with sum_tabs_c[1]:
-                    st.dataframe(st.session_state.classifier_summary, use_container_width=True)
+                    st.dataframe(st.session_state.classifier_summary, width="stretch")
                 with sum_tabs_c[2]:
-                    st.dataframe(st.session_state.classifier_cat_summary, use_container_width=True)
+                    st.dataframe(st.session_state.classifier_cat_summary, width="stretch")
                 
             st.download_button(
                 label="Download Excel Export",
                 data=st.session_state.classifier_excel_buffer,
                 file_name="url_classification.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+    with tabs[2]:
+        st.markdown("#### Ahrefs Top Pages Visualizer")
+        st.info("💡 **Instructions:** Upload an Ahrefs 'Top Pages' export CSV to visualize traffic and keyword changes grouped by markets and categories.")
+        
+        # UI Elements
+        ahrefs_file = st.file_uploader("Upload Ahrefs Top Pages CSV", type=["csv"])
+        
+        if "ahrefs_processed" not in st.session_state:
+            st.session_state.ahrefs_processed = False
+            st.session_state.ahrefs_df = None
+            
+        if st.button("Clear Top Pages Data"):
+            st.session_state.ahrefs_processed = False
+            st.session_state.ahrefs_df = None
+            st.rerun()
+            
+        if ahrefs_file:
+            if not st.session_state.ahrefs_processed:
+                try:
+                    # Attempt standard CSV first
+                    try:
+                        df_ahrefs = pd.read_csv(ahrefs_file)
+                    except Exception:
+                        # Fallback for Ahrefs default UTF-16LE tab-separated format
+                        ahrefs_file.seek(0)
+                        df_ahrefs = pd.read_csv(ahrefs_file, encoding='utf-16le', sep='\t')
+                    
+                    if "URL" not in df_ahrefs.columns:
+                        st.error("The uploaded CSV does not contain a 'URL' column. Please check the file.")
+                    else:
+                        with st.spinner("Classifying and processing URLs..."):
+                            df_ahrefs["URL"] = df_ahrefs["URL"].astype(str)
+                            
+                            # Clean up relevant columns to numeric (coerce errors to NaN, then fill with 0)
+                            numeric_cols = ["Traffic change", "Keywords change", "UR"]
+                            for col in numeric_cols:
+                                if col in df_ahrefs.columns:
+                                    df_ahrefs[col] = pd.to_numeric(df_ahrefs[col], errors='coerce').fillna(0)
+                                else:
+                                    df_ahrefs[col] = 0.0 # Create it if missing for some reason
+
+                            # Apply classifications
+                            df_ahrefs["Market"] = df_ahrefs["URL"].apply(backend.categorize_market)
+                            df_ahrefs["Website Category"] = df_ahrefs["URL"].apply(backend.categorize_website)
+                            df_ahrefs["Language"] = df_ahrefs["URL"].apply(backend.categorize_language)
+                            
+                            st.session_state.ahrefs_df = df_ahrefs
+                            st.session_state.ahrefs_processed = True
+                            st.success("Successfully processed Ahrefs export!")
+                except Exception as e:
+                    st.error(f"Error processing the Ahrefs CSV file: {e}")
+                    
+        if st.session_state.ahrefs_processed and st.session_state.ahrefs_df is not None:
+            df = st.session_state.ahrefs_df
+            
+            view_tab1, view_tab3 = st.tabs(["🌍 Market Performance", "📁 Category Performance"])
+            
+            def style_change_gradient(s):
+                s_num = pd.to_numeric(s, errors='coerce')
+                max_val = s_num[s_num > 0].max() if (s_num > 0).any() else 0
+                min_val = s_num[s_num < 0].min() if (s_num < 0).any() else 0
+                
+                styles = []
+                for val in s_num:
+                    if pd.isna(val) or val == 0:
+                        styles.append('')
+                    elif val > 0:
+                        intensity = 0.05 + 0.45 * (val / max_val) if max_val > 0 else 0.5
+                        styles.append(f'background-color: rgba(46, 204, 113, {intensity:.2f});')
+                    else:
+                        intensity = 0.05 + 0.45 * (val / min_val) if min_val < 0 else 0.5
+                        styles.append(f'background-color: rgba(231, 76, 60, {intensity:.2f});')
+                return styles
+
+            def render_ahrefs_view(df_view, group_col):
+                if df_view.empty:
+                    st.warning("No data matches the selected filters.")
+                    return
+
+                # Calculate metrics grouped by standard columns
+                grouped = df_view.groupby(group_col).agg(
+                    Total_URLs=("URL", "count"),
+                    Total_Traffic_Change=("Traffic change", "sum"),
+                    Total_Keywords_Change=("Keywords change", "sum"),
+                    Avg_URL_Rating=("UR", "mean") # Adding UR averaging
+                ).reset_index()
+                
+                # Sort by traffic change to find big winners/losers
+                grouped = grouped.sort_values(by="Total_Traffic_Change", ascending=False)
+                
+                # Apply styling and limit decimals
+                styled_grouped = grouped.style.format(precision=1).apply(style_change_gradient, subset=["Total_Traffic_Change", "Total_Keywords_Change"])
+                
+                # Display dataframe
+                st.dataframe(styled_grouped, width="stretch", hide_index=True)
+                
+                st.markdown("##### Traffic Change Visualized")
+                
+                # Altair Chart for Traffic Change
+                chart_traffic = alt.Chart(grouped).mark_bar().encode(
+                    x=alt.X(f"{group_col}:N", sort="-y", title=group_col),
+                    y=alt.Y("Total_Traffic_Change:Q", title="Total Traffic Change"),
+                    color=alt.condition(
+                        alt.datum.Total_Traffic_Change > 0,
+                        alt.value("#2ecc71"),  # Green for positive
+                        alt.value("#e74c3c")   # Red for negative
+                    ),
+                    tooltip=[group_col, "Total_Traffic_Change", "Total_Keywords_Change", "Total_URLs", "Avg_URL_Rating"]
+                ).properties(
+                    height=500
+                )
+                
+                st.altair_chart(chart_traffic, width="stretch")
+
+                st.markdown("##### Keywords Change Visualized")
+
+                # Altair Chart for Keyword Change
+                chart_keywords = alt.Chart(grouped).mark_bar().encode(
+                    x=alt.X(f"{group_col}:N", sort="-y", title=group_col),
+                    y=alt.Y("Total_Keywords_Change:Q", title="Total Keywords Change"),
+                    color=alt.condition(
+                        alt.datum.Total_Keywords_Change > 0,
+                        alt.value("#2ecc71"),
+                        alt.value("#e74c3c")
+                    ),
+                    tooltip=[group_col, "Total_Traffic_Change", "Total_Keywords_Change", "Total_URLs", "Avg_URL_Rating"]
+                ).properties(
+                    height=500
+                )
+
+                st.altair_chart(chart_keywords, width="stretch")
+
+                st.markdown("##### Average URL Rating (UR)")
+
+                # Altair Chart for Average UR
+                chart_ur = alt.Chart(grouped).mark_bar(color="#f39c12").encode(
+                    x=alt.X(f"{group_col}:N", sort="-y", title=group_col),
+                    y=alt.Y("Avg_URL_Rating:Q", title="Avg URL Rating"),
+                    tooltip=[group_col, "Total_Traffic_Change", "Total_Keywords_Change", "Total_URLs", "Avg_URL_Rating"]
+                ).properties(
+                    height=500
+                )
+
+                st.altair_chart(chart_ur, width="stretch")
+                
+                # --- Detailed URL View ---
+                st.markdown("---")
+                st.markdown("##### Detailed URL View")
+                # Sort the raw data for the table by Traffic Change
+                df_detailed = df_view.sort_values(by="Traffic change", ascending=False).copy()
+                
+                # Increase rendering limits for large dataframes before applying style
+                pd.set_option("styler.render.max_elements", 2000000)
+                
+                styled_detailed = df_detailed.style.format(precision=1).apply(style_change_gradient, subset=["Traffic change", "Keywords change"])
+                st.dataframe(styled_detailed, width="stretch", hide_index=True)
+                
+                # We limit to top 50 rows for individual URL charts to avoid clutter, 
+                # but if the user wants all of them, they are in the table.
+                top_urls = df_detailed.head(50)
+                if not top_urls.empty:
+                    st.markdown("###### Top 50 URLs by Traffic Change Visualized")
+                    
+                    chart_url_traffic = alt.Chart(top_urls).mark_bar().encode(
+                        x=alt.X("URL:N", sort="-y", title="URL", axis=alt.Axis(labelLimit=300)),
+                        y=alt.Y("Traffic change:Q", title="Traffic Change"),
+                        color=alt.condition(
+                            alt.datum["Traffic change"] > 0,
+                            alt.value("#2ecc71"),
+                            alt.value("#e74c3c")
+                        ),
+                        tooltip=["URL", "Traffic change", "Keywords change", "UR", "Market", "Website Category"]
+                    ).properties(height=400)
+                    st.altair_chart(chart_url_traffic, width="stretch")
+
+                    chart_url_keywords = alt.Chart(top_urls).mark_bar().encode(
+                        x=alt.X("URL:N", sort="-y", title="URL", axis=alt.Axis(labelLimit=300)),
+                        y=alt.Y("Keywords change:Q", title="Keywords Change"),
+                        color=alt.condition(
+                            alt.datum["Keywords change"] > 0,
+                            alt.value("#2ecc71"),
+                            alt.value("#e74c3c")
+                        ),
+                        tooltip=["URL", "Traffic change", "Keywords change", "UR", "Market", "Website Category"]
+                    ).properties(height=400)
+                    st.altair_chart(chart_url_keywords, width="stretch")
+
+                    chart_url_ur = alt.Chart(top_urls).mark_bar(color="#f39c12").encode(
+                        x=alt.X("URL:N", sort="-y", title="URL", axis=alt.Axis(labelLimit=300)),
+                        y=alt.Y("UR:Q", title="URL Rating"),
+                        tooltip=["URL", "Traffic change", "Keywords change", "UR", "Market", "Website Category"]
+                    ).properties(height=400)
+                    st.altair_chart(chart_url_ur, width="stretch")
+                
+            with view_tab1:
+                st.markdown("### Market Performance")
+                c1, c2 = st.columns(2)
+                
+                available_markets = ["All"] + sorted([m for m in df["Market"].unique() if pd.notna(m) and str(m).strip() != ""])
+                available_categories = ["All"] + sorted([c for c in df["Website Category"].unique() if pd.notna(c) and str(c).strip() != ""])
+                
+                with c1:
+                    selected_market_filter = st.selectbox("Filter by Market", available_markets, key="filter_market_t1")
+                with c2:
+                    selected_cat_filter = st.selectbox("Filter by Category", available_categories, key="filter_cat_t1")
+                
+                filter_df1 = df.copy()
+                if selected_market_filter != "All":
+                    filter_df1 = filter_df1[filter_df1["Market"] == selected_market_filter]
+                if selected_cat_filter != "All":
+                    filter_df1 = filter_df1[filter_df1["Website Category"] == selected_cat_filter]
+
+                render_ahrefs_view(filter_df1, "Market")
+                
+            with view_tab3:
+                st.markdown("### Category Performance")
+                c_c1, c_c2 = st.columns(2)
+                
+                with c_c1:
+                    selected_market_filter_2 = st.selectbox("Filter by Market", available_markets, key="filter_market_t2")
+                with c_c2:
+                    selected_cat_filter_2 = st.selectbox("Filter by Category", available_categories, key="filter_cat_t2")
+
+                filter_df2 = df.copy()
+                if selected_market_filter_2 != "All":
+                    filter_df2 = filter_df2[filter_df2["Market"] == selected_market_filter_2]
+                if selected_cat_filter_2 != "All":
+                    filter_df2 = filter_df2[filter_df2["Website Category"] == selected_cat_filter_2]
+
+                render_ahrefs_view(filter_df2, "Website Category")
+                
+            # Offer download
+            csv_out = df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Download Classified Data",
+                data=csv_out,
+                file_name="ahrefs_classified_data.csv",
+                mime="text/csv",
             )

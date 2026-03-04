@@ -1856,3 +1856,118 @@ def fetch_kpi_time_series(brand_id, tag, start_date, end_date, api_token):
         df = df.sort_values('Date')
         
     return df
+
+def fetch_cross_market_data(brand_id, tag, start_date, end_date, api_token):
+    """
+    Fetches aggregate KPI data for a specific brand, broken down by LLM (search_engine).
+    Returns a dictionary mapping search_engine -> {'Visibility': float, 'Sentiment': float, 'Web Search Rate': float}.
+    """
+    if not brand_id or not api_token or not start_date or not end_date:
+        return {}
+
+    url = f"https://app.accuranker.com/api/v4/brands/{brand_id}/prompts/"
+    headers = {
+        "Authorization": f"Token {api_token}",
+        "Accept": "application/json",
+    }
+    
+    params = {
+        "fields": "id,prompt,tags,results.created_at,results.search_engine,results.brands.visibility,results.brands.sentiment,results.brands.web_search_rate,results.brands.is_own",
+        "limit": 1000,
+        "period_from": start_date.strftime("%Y-%m-%d") if hasattr(start_date, 'strftime') else start_date,
+        "period_to": end_date.strftime("%Y-%m-%d") if hasattr(end_date, 'strftime') else end_date
+    }
+    
+    all_prompts = []
+    
+    try:
+        while url:
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            chunk = []
+            if isinstance(data, list):
+                chunk = data
+                url = None
+            elif isinstance(data, dict):
+                chunk = data.get('results', [])
+                url = data.get('next')
+                if url: params = None
+            
+            all_prompts.extend(chunk)
+            
+            if len(all_prompts) > 10000: # Safety
+                break
+
+    except Exception as e:
+        print(f"API Error fetching cross market data: {e}")
+        return {}
+
+    tag_lower = tag.lower() if tag else None
+    
+    engine_aggs = {}
+
+    for p in all_prompts:
+        p_tags = [t.lower() for t in (p.get('tags') or [])]
+        if tag_lower and tag_lower not in p_tags:
+            continue
+            
+        results = p.get('results', [])
+        
+        # Group results by search engine to find the latest date per engine for this prompt
+        results_by_engine = {}
+        for r in results:
+            engine = r.get('search_engine')
+            if not engine: continue
+            
+            # Simple date comparison works for ISO 8601 strings
+            if engine not in results_by_engine or r.get('created_at', '') > results_by_engine[engine].get('created_at', ''):
+                results_by_engine[engine] = r
+                
+        # Now parse the latest result per engine
+        for engine, r in results_by_engine.items():
+            brands = r.get('brands', [])
+            for b in brands:
+                if b.get('is_own'):
+                    visi = b.get('visibility')
+                    sent = b.get('sentiment')
+                    wsr = b.get('web_search_rate')
+                    
+                    visi = float(visi) if visi is not None else 0.0
+                    sent = float(sent) if sent is not None else 0.0
+                    wsr = float(wsr) if wsr is not None else 0.0
+                    
+                    if engine not in engine_aggs:
+                        engine_aggs[engine] = {'visi_sum': 0.0, 'visi_count': 0, 'sent_sum': 0.0, 'sent_count': 0, 'wsr_sum': 0.0, 'wsr_count': 0}
+                        
+                    engine_aggs[engine]['visi_sum'] += visi
+                    engine_aggs[engine]['visi_count'] += 1
+                    
+                    engine_aggs[engine]['wsr_sum'] += wsr
+                    engine_aggs[engine]['wsr_count'] += 1
+                    
+                    if visi > 0:
+                        engine_aggs[engine]['sent_sum'] += sent
+                        engine_aggs[engine]['sent_count'] += 1
+                        
+                    break
+                    
+    final_data = {}
+    for engine, aggs in engine_aggs.items():
+        v_count = aggs['visi_count']
+        s_count = aggs['sent_count']
+        w_count = aggs['wsr_count']
+        
+        if v_count > 0:
+            avg_visi = aggs['visi_sum'] / v_count
+            avg_sent = (aggs['sent_sum'] / s_count) if s_count > 0 else 0.0
+            avg_wsr = (aggs['wsr_sum'] / w_count) if w_count > 0 else 0.0
+            
+            final_data[engine] = {
+                'Visibility': avg_visi,
+                'Sentiment': avg_sent,
+                'Web Search Rate': avg_wsr
+            }
+            
+    return final_data
