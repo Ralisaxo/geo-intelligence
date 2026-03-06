@@ -2741,7 +2741,7 @@ elif current_page == "AI Powered Tools":
 
 # --- PAGE: RANDOM TOOLS ---
 elif current_page == "Random Tools":
-    tabs = st.tabs(["Sitemap Checker", "URL Classifier", "Ahrefs Top Pages Visualizer"])
+    tabs = st.tabs(["Sitemap Checker", "URL Classifier", "Ahrefs Top Pages Visualizer", "GSC BigQuery Visualizer"])
     
     with tabs[0]:
         st.markdown("#### Sitemap Checker")
@@ -3260,3 +3260,266 @@ elif current_page == "Random Tools":
                 file_name="ahrefs_classified_data.csv",
                 mime="text/csv",
             )
+
+    with tabs[3]:
+        st.markdown("#### GSC BigQuery Visualizer")
+        st.info("💡 **Instructions:** Upload a Google Search Console (via BigQuery) export CSV to visualize clicks and impressions changes grouped by markets and categories.")
+        
+        # UI Elements
+        gsc_file = st.file_uploader("Upload GSC BigQuery CSV", type=["csv"], key="gsc_file_uploader")
+        
+        if "gsc_processed" not in st.session_state:
+            st.session_state.gsc_processed = False
+            st.session_state.gsc_df = None
+            
+        if st.button("Clear GSC Data"):
+            st.session_state.gsc_processed = False
+            st.session_state.gsc_df = None
+            st.rerun()
+            
+        if gsc_file:
+            if not st.session_state.gsc_processed:
+                try:
+                    df_gsc = pd.read_csv(gsc_file)
+                    
+                    if "Landing Page" not in df_gsc.columns:
+                        st.error("The uploaded CSV does not contain a 'Landing Page' column. Please check the file.")
+                    else:
+                        with st.spinner("Classifying and processing URLs..."):
+                            df_gsc["Landing Page"] = df_gsc["Landing Page"].astype(str)
+                            
+                            # Rename delta columns mapping to Pandas default naming duplicates
+                            # Based on typical BigQuery exports
+                            rename_map = {}
+                            if "Δ" in df_gsc.columns:
+                                rename_map["Δ"] = "Clicks Change"
+                            if "Δ.1" in df_gsc.columns:
+                                rename_map["Δ.1"] = "Impressions Change"
+                            
+                            if rename_map:
+                                df_gsc.rename(columns=rename_map, inplace=True)
+                            
+                            # Clean up relevant columns to numeric (coerce errors to NaN, then fill with 0)
+                            numeric_cols = ["clicks", "impressions", "Clicks Change", "Impressions Change"]
+                            for col in numeric_cols:
+                                if col in df_gsc.columns:
+                                    df_gsc[col] = pd.to_numeric(df_gsc[col], errors='coerce').fillna(0)
+                                else:
+                                    df_gsc[col] = 0.0 # Create it if missing for some reason
+
+                            # Apply classifications based on the Landing Page URL
+                            df_gsc["Inferred Market (from URL)"] = df_gsc["Landing Page"].apply(backend.categorize_market)
+                            df_gsc["Website Category"] = df_gsc["Landing Page"].apply(backend.categorize_website)
+                            df_gsc["Inferred Language (from URL)"] = df_gsc["Landing Page"].apply(backend.categorize_language)
+                            
+                            # Keep Original Traffic Origin 
+                            if "traffic origin" in df_gsc.columns:
+                                df_gsc["Traffic Origin (Actual)"] = df_gsc["traffic origin"]
+                            else:
+                                df_gsc["Traffic Origin (Actual)"] = "Unknown"
+                                
+                            st.session_state.gsc_df = df_gsc
+                            st.session_state.gsc_processed = True
+                            
+                            st.success("Successfully processed GSC BigQuery export!")
+                except Exception as e:
+                    st.error(f"Error processing the GSC CSV file: {e}")
+
+        if st.session_state.gsc_processed and st.session_state.gsc_df is not None:
+            df_gsc = st.session_state.gsc_df
+            
+            view_tab_gsc_market, view_tab_gsc_cat, view_tab_gsc_origin = st.tabs(["🌍 Market Performance", "📁 Category Performance", "📍 Traffic Origin Performance"])
+
+            def style_change_gradient(s):
+                s_num = pd.to_numeric(s, errors='coerce')
+                max_val = s_num[s_num > 0].max() if (s_num > 0).any() else 0
+                min_val = s_num[s_num < 0].min() if (s_num < 0).any() else 0
+                
+                styles = []
+                for val in s_num:
+                    if pd.isna(val) or val == 0:
+                        styles.append('')
+                    elif val > 0:
+                        intensity = 0.05 + 0.45 * (val / max_val) if max_val > 0 else 0.5
+                        styles.append(f'background-color: rgba(46, 204, 113, {intensity:.2f});')
+                    else:
+                        intensity = 0.05 + 0.45 * (val / min_val) if min_val < 0 else 0.5
+                        styles.append(f'background-color: rgba(231, 76, 60, {intensity:.2f});')
+                return styles
+
+            def render_gsc_view(df_view, group_col):
+                if df_view.empty:
+                    st.warning("No data matches the selected filters.")
+                    return
+
+                # Calculate metrics grouped by standard columns
+                grouped = df_view.groupby(group_col).agg(
+                    Total_URLs=("Landing Page", "count"),
+                    Total_Clicks=("clicks", "sum"),
+                    Total_Impressions=("impressions", "sum"),
+                    Clicks_Change=("Clicks Change", "sum"),
+                    Impressions_Change=("Impressions Change", "sum")
+                ).reset_index()
+                
+                # Sort by traffic change to find big winners/losers
+                grouped = grouped.sort_values(by="Clicks_Change", ascending=False)
+                
+                # Apply styling and limit decimals
+                styled_grouped = grouped.style.format(precision=1).apply(style_change_gradient, subset=["Clicks_Change", "Impressions_Change"])
+                
+                # Display dataframe
+                st.dataframe(styled_grouped, width="stretch", hide_index=True)
+                
+                st.markdown("##### Clicks Change Visualized")
+                
+                # Altair Chart for Clicks Change
+                chart_clicks = alt.Chart(grouped).mark_bar().encode(
+                    x=alt.X(f"{group_col}:N", sort="-y", title=group_col),
+                    y=alt.Y("Clicks_Change:Q", title="Clicks Change"),
+                    color=alt.condition(
+                        alt.datum.Clicks_Change > 0,
+                        alt.value("#2ecc71"),  # Green for positive
+                        alt.value("#e74c3c")   # Red for negative
+                    ),
+                    tooltip=[group_col, "Clicks_Change", "Total_Clicks", "Impressions_Change", "Total_Impressions", "Total_URLs"]
+                ).properties(
+                    height=500
+                )
+                
+                st.altair_chart(chart_clicks, width="stretch")
+
+                st.markdown("##### Impressions Change Visualized")
+
+                # Altair Chart for Impressions Change
+                chart_impressions = alt.Chart(grouped).mark_bar().encode(
+                    x=alt.X(f"{group_col}:N", sort="-y", title=group_col),
+                    y=alt.Y("Impressions_Change:Q", title="Impressions Change"),
+                    color=alt.condition(
+                        alt.datum.Impressions_Change > 0,
+                        alt.value("#2ecc71"),
+                        alt.value("#e74c3c")
+                    ),
+                    tooltip=[group_col, "Clicks_Change", "Total_Clicks", "Impressions_Change", "Total_Impressions", "Total_URLs"]
+                ).properties(
+                    height=500
+                )
+
+                st.altair_chart(chart_impressions, width="stretch")
+                
+                # --- Detailed URL View ---
+                st.markdown("---")
+                st.markdown("##### Detailed URL View (Top 1000 URLs)")
+                # Sort the raw data for the table by Clicks Change
+                df_detailed = df_view.sort_values(by="Clicks Change", ascending=False).copy()
+                
+                # Limit the displayed data to top 1000 rows to avoid Pandas Styler cell limits
+                df_detailed_display = df_detailed.head(1000)
+                
+                # Increase rendering limits for large dataframes before applying style
+                pd.set_option("styler.render.max_elements", 2000000)
+                
+                styled_detailed = df_detailed_display.style.format(precision=1).apply(style_change_gradient, subset=["Clicks Change", "Impressions Change"])
+                st.dataframe(styled_detailed, width="stretch", hide_index=True)
+                
+                # We limit to top 50 rows for individual URL charts to avoid clutter
+                top_urls = df_detailed.head(50)
+                if not top_urls.empty:
+                    st.markdown("###### Top 50 URLs by Clicks Change Visualized")
+                    
+                    chart_url_clicks = alt.Chart(top_urls).mark_bar().encode(
+                        x=alt.X("Landing Page:N", sort="-y", title="Landing Page", axis=alt.Axis(labelLimit=300)),
+                        y=alt.Y("Clicks Change:Q", title="Clicks Change"),
+                        color=alt.condition(
+                            alt.datum["Clicks Change"] > 0,
+                            alt.value("#2ecc71"),
+                            alt.value("#e74c3c")
+                        ),
+                        tooltip=["Landing Page", "Clicks Change", "clicks", "Impressions Change", "impressions", "Inferred Market (from URL)", "Traffic Origin (Actual)", "Website Category"]
+                    ).properties(height=400)
+                    st.altair_chart(chart_url_clicks, width="stretch")
+
+            # Shared filters across views for consistency
+            gsc_markets = ["All"] + sorted([m for m in df_gsc["Inferred Market (from URL)"].unique() if pd.notna(m) and str(m).strip() != ""])
+            gsc_categories = ["All"] + sorted([c for c in df_gsc["Website Category"].unique() if pd.notna(c) and str(c).strip() != ""])
+            gsc_origins = ["All"] + sorted([o for o in df_gsc["Traffic Origin (Actual)"].unique() if pd.notna(o) and str(o).strip() != ""])
+
+            with view_tab_gsc_market:
+                st.markdown("### Market Performance (Inferred from URL)")
+                c1, c2, c3 = st.columns(3)
+                
+                with c1:
+                    filter_m1 = st.selectbox("Filter by Inferred Market", gsc_markets, key="gsc_m_m1")
+                with c2:
+                    filter_c1 = st.selectbox("Filter by Category", gsc_categories, key="gsc_c_m1")
+                with c3:
+                    filter_o1 = st.selectbox("Filter by Traffic Origin", gsc_origins, key="gsc_o_m1")
+                
+                f_df1 = df_gsc.copy()
+                if filter_m1 != "All": f_df1 = f_df1[f_df1["Inferred Market (from URL)"] == filter_m1]
+                if filter_c1 != "All": f_df1 = f_df1[f_df1["Website Category"] == filter_c1]
+                if filter_o1 != "All": f_df1 = f_df1[f_df1["Traffic Origin (Actual)"] == filter_o1]
+
+                render_gsc_view(f_df1, "Inferred Market (from URL)")
+                
+            with view_tab_gsc_cat:
+                st.markdown("### Category Performance")
+                c_c1, c_c2, c_c3 = st.columns(3)
+                
+                with c_c1:
+                    filter_m2 = st.selectbox("Filter by Inferred Market", gsc_markets, key="gsc_m_c1")
+                with c_c2:
+                    filter_c2 = st.selectbox("Filter by Category", gsc_categories, key="gsc_c_c1")
+                with c_c3:
+                    filter_o2 = st.selectbox("Filter by Traffic Origin", gsc_origins, key="gsc_o_c1")
+
+                f_df2 = df_gsc.copy()
+                if filter_m2 != "All": f_df2 = f_df2[f_df2["Inferred Market (from URL)"] == filter_m2]
+                if filter_c2 != "All": f_df2 = f_df2[f_df2["Website Category"] == filter_c2]
+                if filter_o2 != "All": f_df2 = f_df2[f_df2["Traffic Origin (Actual)"] == filter_o2]
+
+                render_gsc_view(f_df2, "Website Category")
+
+            with view_tab_gsc_origin:
+                st.markdown("### Traffic Origin Performance (Actual Visitor Location)")
+                c_o1, c_o2, c_o3 = st.columns(3)
+                
+                with c_o1:
+                    filter_m3 = st.selectbox("Filter by Inferred Market", gsc_markets, key="gsc_m_o1")
+                with c_o2:
+                    filter_c3 = st.selectbox("Filter by Category", gsc_categories, key="gsc_c_o1")
+                with c_o3:
+                    filter_o3 = st.selectbox("Filter by Traffic Origin", gsc_origins, key="gsc_o_o1")
+
+                f_df3 = df_gsc.copy()
+                if filter_m3 != "All": f_df3 = f_df3[f_df3["Inferred Market (from URL)"] == filter_m3]
+                if filter_c3 != "All": f_df3 = f_df3[f_df3["Website Category"] == filter_c3]
+                if filter_o3 != "All": f_df3 = f_df3[f_df3["Traffic Origin (Actual)"] == filter_o3]
+
+                render_gsc_view(f_df3, "Traffic Origin (Actual)")
+                
+            # Offer download
+            st.markdown("---")
+            st.markdown("##### Export Data")
+            csv_format_gsc = st.selectbox(
+                "CSV Export Format", 
+                ["Standard CSV (, separator, . decimal)", "EU Excel Ready (; separator, , decimal)"], 
+                key="csv_format_gsc"
+            )
+            
+            if "EU Excel" in csv_format_gsc:
+                df_csv_gsc = df_gsc.copy()
+                # Replace dots with commas for float columns
+                for col in df_csv_gsc.select_dtypes(include=['float64', 'float32']).columns:
+                    df_csv_gsc[col] = df_csv_gsc[col].apply(lambda x: str(x).replace('.', ','))
+                csv_data_gsc = df_csv_gsc.to_csv(index=False, sep=';').encode('utf-8')
+            else:
+                csv_data_gsc = df_gsc.to_csv(index=False).encode('utf-8')
+                
+            st.download_button(
+                label="📥 Download Classified GSC Data",
+                data=csv_data_gsc,
+                file_name="gsc_classified_data.csv",
+                mime="text/csv",
+            )
+
+
