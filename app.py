@@ -31,6 +31,31 @@ def estimate_tokens_and_cost(texts, model_name="gpt-4o", output_tokens_est=0):
     
     return total_input_tokens, cost_est
 
+def load_csv_robustly(file_obj):
+    """
+    Attempts to load a CSV file using multiple encodings and auto-detecting the separator.
+    Used across different tools to ensure resilience against various CSV exports.
+    """
+    encodings_to_try = [
+        'utf-8', 
+        'utf-8-sig',
+        'utf-16', 
+        'utf-16le', 
+        'latin1', 
+        'cp1252'
+    ]
+    
+    last_err = None
+    for enc in encodings_to_try:
+        try:
+            file_obj.seek(0)
+            return pd.read_csv(file_obj, encoding=enc, sep=None, engine='python', on_bad_lines='skip')
+        except Exception as e:
+            last_err = e
+            continue
+            
+    raise last_err
+
 # -----------------------------------------------------------------------------
 # AUTHENTICATION
 # -----------------------------------------------------------------------------
@@ -2520,15 +2545,7 @@ elif current_page == "AI Powered Tools":
             # Read file
             try:
                 if uploaded_file.name.endswith('.csv'):
-                    try:
-                        df_flex = pd.read_csv(uploaded_file, encoding='utf-8', sep=None, engine='python', on_bad_lines='skip')
-                    except UnicodeDecodeError:
-                        uploaded_file.seek(0)
-                        try:
-                            df_flex = pd.read_csv(uploaded_file, encoding='utf-16', sep=None, engine='python', on_bad_lines='skip')
-                        except UnicodeDecodeError:
-                            uploaded_file.seek(0)
-                            df_flex = pd.read_csv(uploaded_file, encoding='latin1', sep=None, engine='python', on_bad_lines='skip')
+                    df_flex = load_csv_robustly(uploaded_file)
                 else:
                     df_flex = pd.read_excel(uploaded_file)
             except Exception as e:
@@ -2869,7 +2886,7 @@ elif current_page == "Random Tools":
             if uploaded_file:
                 try:
                     if uploaded_file.name.endswith(".csv"):
-                        original_df = pd.read_csv(uploaded_file)
+                        original_df = load_csv_robustly(uploaded_file)
                     else:
                         original_df = pd.read_excel(uploaded_file)
                         
@@ -2972,13 +2989,7 @@ elif current_page == "Random Tools":
         if ahrefs_file:
             if not st.session_state.ahrefs_processed:
                 try:
-                    # Attempt standard CSV first
-                    try:
-                        df_ahrefs = pd.read_csv(ahrefs_file)
-                    except Exception:
-                        # Fallback for Ahrefs default UTF-16LE tab-separated format
-                        ahrefs_file.seek(0)
-                        df_ahrefs = pd.read_csv(ahrefs_file, encoding='utf-16le', sep='\t')
+                    df_ahrefs = load_csv_robustly(ahrefs_file)
                     
                     if "URL" not in df_ahrefs.columns:
                         st.error("The uploaded CSV does not contain a 'URL' column. Please check the file.")
@@ -3280,7 +3291,7 @@ elif current_page == "Random Tools":
         if gsc_file:
             if not st.session_state.gsc_processed:
                 try:
-                    df_gsc = pd.read_csv(gsc_file)
+                    df_gsc = load_csv_robustly(gsc_file)
                     
                     if "Landing Page" not in df_gsc.columns:
                         st.error("The uploaded CSV does not contain a 'Landing Page' column. Please check the file.")
