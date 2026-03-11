@@ -1683,6 +1683,10 @@ elif current_page == "LLM Monitoring":
         with col_sen:
             st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
             show_sentiment = st.checkbox("Sentiment", value=True, key="kpi_show_sen")
+            
+        with col_btn:
+            st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
+            show_trendlines = st.checkbox("Show Trendlines", value=False, key="kpi_show_trend")
         
         with col_btn:
             st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
@@ -1751,6 +1755,29 @@ elif current_page == "LLM Monitoring":
             df_plot = st.session_state.kpi_series_df.copy()
             meta = st.session_state.kpi_chart_meta
             
+            # Detect Competitors in DataFrame
+            # Look for columns starting with "Visibility - " (excluding comparison brand)
+            competitor_names = set()
+            for col in df_plot.columns:
+                 if col.startswith("Visibility - ") and col != meta.get('comp_vis'):
+                      comp_name = col.replace("Visibility - ", "")
+                      competitor_names.add(comp_name)
+                      
+            competitor_names = sorted(list(competitor_names))[:5] # Max 5
+            
+            # Render Competitor Toggles
+            active_competitors = []
+            if competitor_names:
+                st.markdown("##### Pinned Competitors")
+                comp_cols = st.columns(len(competitor_names) + (5 - len(competitor_names))) # Keep layout intact up to 5
+                for i, comp_name in enumerate(competitor_names):
+                     with comp_cols[i]:
+                          # State is preserved automatically by Streamlit key if we don't override default
+                          if st.checkbox(comp_name, value=False, key=f"kpi_comp_toggle_{comp_name}"):
+                               active_competitors.append(comp_name)
+                               
+            # Optional: handle if comparison brand conflicts with a pinned comp
+            
             val_columns = [c for c in df_plot.columns if c != 'Date']
             
             # Apply rolling average if selected
@@ -1778,6 +1805,17 @@ elif current_page == "LLM Monitoring":
                     
                 if show_sentiment:
                     legend_html += f"<div style='display: flex; align-items: center;'><span style='display: inline-block; width: 25px; border-top: 3px dashed #c0392b; margin-right: 8px;'></span> {meta['comp_sen']}</div>"
+                    
+            # Competitor colors
+            comp_colors = ["#f1c40f", "#9b59b6", "#34495e", "#e67e22", "#1abc9c"]
+            
+            for i, comp_name in enumerate(active_competitors):
+                 color = comp_colors[i % len(comp_colors)]
+                 if show_visibility:
+                      legend_html += f"<div style='display: flex; align-items: center;'><span style='display: inline-block; width: 25px; border-top: 2px solid {color}; margin-right: 8px;'></span> Visibility ({comp_name})</div>"
+                 if show_sentiment:
+                      # We can adjust style slightly for sentiment to differentiate from visibility, e.g. dotted
+                      legend_html += f"<div style='display: flex; align-items: center;'><span style='display: inline-block; width: 25px; border-top: 2px dotted {color}; margin-right: 8px;'></span> Sentiment ({comp_name})</div>"
             
             legend_html += "</div>"
             st.markdown(legend_html, unsafe_allow_html=True)
@@ -1787,44 +1825,59 @@ elif current_page == "LLM Monitoring":
                 x=alt.X('Date:T', axis=alt.Axis(title='Date'))
             )
             
-            # We remove resolve_scale(y='independent') which separates every single layer.
-            # Instead, Altair automatically links axes with the same field names. However, since they have different names like "Visibility (Saxo BE)" vs "Visibility (Saxo UK)", 
-            # we need to map the secondary charts to use the exact same axis title object as the first ones to force merging.
-            
             layers = []
+            
+            # Helper function to append chart and trendline
+            def add_line(field, title, color, is_dashed=False, is_dotted=False, axis_title=None):
+                stroke_dash = []
+                if is_dashed: stroke_dash = [5, 5]
+                elif is_dotted: stroke_dash = [2, 2]
+                
+                # Check if we should render on the shared scale
+                y_axis = alt.Y(f"{field}:Q", scale=alt.Scale(zero=True))
+                if axis_title is not None:
+                     y_axis = alt.Y(f"{field}:Q", scale=alt.Scale(zero=True), axis=alt.Axis(title=axis_title, titleColor=color))
+                else:
+                     y_axis = alt.Y(f"{field}:Q", scale=alt.Scale(zero=True), axis=alt.Axis(title=None))
+
+                line = base.mark_line(color=color, strokeWidth=3 if not is_dashed and not is_dotted else 2, strokeDash=stroke_dash).encode(
+                    y=y_axis,
+                    tooltip=['Date', alt.Tooltip(f"{field}:Q", format='.2f')]
+                )
+                layers.append(line)
+                
+                # Add trendline if requested
+                if show_trendlines:
+                     trend = line.transform_regression('Date', field, method='linear').mark_line(
+                         color=color, strokeDash=[5,5], opacity=0.5, strokeWidth=2
+                     )
+                     layers.append(trend)
             
             # Primary lines
             if show_visibility:
-                layers.append(
-                    base.mark_line(color='#2ecc71', strokeWidth=3).encode(
-                        y=alt.Y(f"{meta['primary_vis']}:Q", scale=alt.Scale(zero=True), axis=alt.Axis(title='Visibility (%)', titleColor='#2ecc71')),
-                        tooltip=['Date', alt.Tooltip(f"{meta['primary_vis']}:Q", format='.2f')]
-                    )
-                )
+                add_line(meta['primary_vis'], 'Visibility', '#2ecc71', axis_title='Visibility (%)')
                 
             if show_sentiment:
-                layers.append(
-                    base.mark_line(color='#e74c3c', strokeWidth=3).encode(
-                        y=alt.Y(f"{meta['primary_sen']}:Q", scale=alt.Scale(zero=True), axis=alt.Axis(title='Sentiment Score', titleColor='#e74c3c')),
-                        tooltip=['Date', alt.Tooltip(f"{meta['primary_sen']}:Q", format='.2f')]
-                    )
-                )
+                add_line(meta['primary_sen'], 'Sentiment', '#e74c3c', axis_title='Sentiment Score')
             
             # Secondary (Comparison) lines if data exists
             if show_visibility and meta['comp_vis'] and meta['comp_vis'] in df_plot.columns:
-                layers.append(
-                    base.mark_line(color='#27ae60', strokeWidth=3, strokeDash=[5, 5]).encode(
-                        y=alt.Y(f"{meta['comp_vis']}:Q", scale=alt.Scale(zero=True), axis=alt.Axis(title=None)),
-                        tooltip=['Date', alt.Tooltip(f"{meta['comp_vis']}:Q", format='.2f')]
-                    )
-                )
+                add_line(meta['comp_vis'], 'Comp Vis', '#27ae60', is_dashed=True)
             if show_sentiment and meta['comp_sen'] and meta['comp_sen'] in df_plot.columns:
-                layers.append(
-                    base.mark_line(color='#c0392b', strokeWidth=3, strokeDash=[5, 5]).encode(
-                        y=alt.Y(f"{meta['comp_sen']}:Q", scale=alt.Scale(zero=True), axis=alt.Axis(title=None)),
-                        tooltip=['Date', alt.Tooltip(f"{meta['comp_sen']}:Q", format='.2f')]
-                    )
-                )
+                add_line(meta['comp_sen'], 'Comp Sen', '#c0392b', is_dashed=True)
+                
+            # Active Pinned Competitor lines
+            for i, comp_name in enumerate(active_competitors):
+                 color = comp_colors[i % len(comp_colors)]
+                 
+                 vis_col = f"Visibility - {comp_name}"
+                 sen_col = f"Sentiment - {comp_name}"
+                 
+                 if show_visibility and vis_col in df_plot.columns:
+                      add_line(vis_col, f"{comp_name} Vis", color)
+                      
+                 if show_sentiment and sen_col in df_plot.columns:
+                      add_line(sen_col, f"{comp_name} Sen", color, is_dotted=True)
             
             if layers:
                 chart = alt.layer(*layers).resolve_scale(

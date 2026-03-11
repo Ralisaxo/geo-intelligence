@@ -1772,7 +1772,7 @@ def fetch_kpi_time_series(brand_id, tag, start_date, end_date, api_token):
     }
     
     params = {
-        "fields": "id,prompt,tags,results.created_at,results.brands.visibility,results.brands.sentiment,results.brands.is_own",
+        "fields": "id,prompt,tags,results.created_at,results.brands.visibility,results.brands.sentiment,results.brands.is_own,results.brands.competitor.display_name,results.brands.competitor.pinned",
         "limit": 1000,
         "period_from": start_date.strftime("%Y-%m-%d") if hasattr(start_date, 'strftime') else start_date,
         "period_to": end_date.strftime("%Y-%m-%d") if hasattr(end_date, 'strftime') else end_date
@@ -1819,41 +1819,74 @@ def fetch_kpi_time_series(brand_id, tag, start_date, end_date, api_token):
             if not date_str:
                 continue
                 
+            if date_str not in data_by_date:
+                data_by_date[date_str] = {'_total_prompts': 0}
+                
+            # Increment total prompts for this date
+            data_by_date[date_str]['_total_prompts'] += 1
+            
             brands = r.get('brands', [])
             for b in brands:
-                if b.get('is_own'):
-                    visi = b.get('visibility')
-                    sent = b.get('sentiment')
+                is_own = b.get('is_own')
+                comp = b.get('competitor')
+                
+                # Default is Own Brand
+                entity_name = 'Own'
+                
+                # If not own, it might be a pinned competitor
+                if not is_own and comp and comp.get('pinned'):
+                     entity_name = comp.get('display_name')
+                elif not is_own:
+                     # We only care about own brand AND pinned competitors
+                     continue
+                
+                visi = b.get('visibility')
+                sent = b.get('sentiment')
+                
+                visi = float(visi) if visi is not None else 0.0
+                sent = float(sent) if sent is not None else 0.0
+                
+                if date_str not in data_by_date:
+                    data_by_date[date_str] = {}
                     
-                    visi = float(visi) if visi is not None else 0.0
-                    sent = float(sent) if sent is not None else 0.0
+                if entity_name not in data_by_date[date_str]:
+                     data_by_date[date_str][entity_name] = {'visi_sum': 0.0, 'visi_count': 0, 'sent_sum': 0.0, 'sent_count': 0}
                     
-                    if date_str not in data_by_date:
-                        data_by_date[date_str] = {'visi_sum': 0.0, 'visi_count': 0, 'sent_sum': 0.0, 'sent_count': 0}
-                        
-                    data_by_date[date_str]['visi_sum'] += visi
-                    data_by_date[date_str]['visi_count'] += 1
-                    
-                    if visi > 0:
-                        data_by_date[date_str]['sent_sum'] += sent
-                        data_by_date[date_str]['sent_count'] += 1
-                        
-                    break
+                data_by_date[date_str][entity_name]['visi_sum'] += visi
+                data_by_date[date_str][entity_name]['visi_count'] += 1
+                
+                if visi > 0:
+                    data_by_date[date_str][entity_name]['sent_sum'] += sent
+                    data_by_date[date_str][entity_name]['sent_count'] += 1
                     
     records = []
-    for date_str, aggs in data_by_date.items():
-        v_count = aggs['visi_count']
-        s_count = aggs['sent_count']
+    for date_str, entities in data_by_date.items():
+        row = {'Date': date_str}
+        total_p = entities.pop('_total_prompts', 1) # default to 1 to avoid div by zero if missing
         
-        if v_count > 0:
-            avg_visi = aggs['visi_sum'] / v_count
-            avg_sent = (aggs['sent_sum'] / s_count) if s_count > 0 else 0.0
-            
-            records.append({
-                'Date': date_str,
-                'Visibility': avg_visi,
-                'Sentiment': avg_sent
-            })
+        for entity_name, aggs in entities.items():
+             v_count = aggs['visi_count']
+             s_count = aggs['sent_count']
+             
+             if v_count > 0:
+                 # Competitors only appear when they have a rank/visibility.
+                 # Their average visibility for a day is the sum of their visibility across all prompts
+                 # divided by the total number of prompts checked that day.
+                 # Own brand might already have 0 visibility recorded in some prompts, so its v_count
+                 # usually equals total_p, but to be safe and accurate for both, we divide by total_p.
+                 avg_visi = aggs['visi_sum'] / total_p
+                 avg_sent = (aggs['sent_sum'] / s_count) if s_count > 0 else 0.0
+                 
+                 if entity_name == 'Own':
+                      row['Visibility'] = avg_visi
+                      row['Sentiment'] = avg_sent
+                 else:
+                      row[f'Visibility - {entity_name}'] = avg_visi
+                      row[f'Sentiment - {entity_name}'] = avg_sent
+        
+        # Only add if it has data
+        if len(row) > 1:
+            records.append(row)
             
     df = pd.DataFrame(records)
     if not df.empty:
