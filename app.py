@@ -1624,7 +1624,7 @@ elif current_page == "LLM Monitoring":
         "Saxo UK": 10000079
     }
 
-    tab_kpi, tab_cross_market, tab_truth, tab_extract = st.tabs(["📈 KPI Monitoring", "🌍 Cross Market Analysis", "🛡️ LLM Truth Control", "⛏️ Source Extraction"])
+    tab_kpi, tab_comp_overview, tab_cross_market, tab_truth, tab_extract = st.tabs(["📈 KPI Monitoring", "🏎️ Competitive Overview", "🌍 Cross Market Analysis", "🛡️ LLM Truth Control", "⛏️ Source Extraction"])
 
     with tab_kpi:
         st.markdown("## 📈 KPI Monitoring")
@@ -1668,8 +1668,8 @@ elif current_page == "LLM Monitoring":
                 
             with col_date:
                 from datetime import datetime, timedelta
-                ninety_days_ago = datetime.today() - timedelta(days=90)
-                date_range = st.date_input("Date Range", value=(ninety_days_ago, datetime.today()), max_value=datetime.today(), key="kpi_date")
+                six_months_ago = datetime.today() - timedelta(days=180)
+                date_range = st.date_input("Date Range", value=(six_months_ago, datetime.today()), max_value=datetime.today(), key="kpi_date")
                 
         col_filters, col_vis, col_sen, col_btn = st.columns([1.5, 1, 1, 1])
         with col_filters:
@@ -1697,11 +1697,13 @@ elif current_page == "LLM Monitoring":
                  st.error("Please select both a start and end date.")
              elif not accuranker_token:
                  st.error("Missing ACCURANKER_TOKEN in secrets.")
+             elif kpi_comp_id and kpi_brand_id == kpi_comp_id:
+                 st.warning("Cannot compare a brand to itself. Please select a different comparison brand or set it to 'None'.")
              else:
                  start_date, end_date = date_range
                  with st.spinner(f"Fetching KPI data from {start_date} to {end_date}..."):
                      # Fetch primary brand
-                     df_kpi_primary = backend.fetch_kpi_time_series(
+                     df_kpi_primary, df_prompts = backend.fetch_kpi_time_series(
                          kpi_brand_id,
                          kpi_tag_clean,
                          start_date,
@@ -1721,7 +1723,7 @@ elif current_page == "LLM Monitoring":
                          
                          # Fetch comparison brand if selected
                          if kpi_comp_id:
-                             df_kpi_comp = backend.fetch_kpi_time_series(
+                             df_kpi_comp, _ = backend.fetch_kpi_time_series(
                                  kpi_comp_id,
                                  kpi_tag_clean,
                                  start_date,
@@ -1741,6 +1743,7 @@ elif current_page == "LLM Monitoring":
                          st.warning("No KPI data found for the selected criteria.")
                          st.session_state.kpi_series_df = None
                          st.session_state.kpi_chart_meta = None
+                         st.session_state.kpi_prompts_df = None
                      else:
                          st.session_state.kpi_series_df = df_final
                          st.session_state.kpi_chart_meta = {
@@ -1749,6 +1752,7 @@ elif current_page == "LLM Monitoring":
                              'comp_vis': f'Visibility ({kpi_comp_name})' if kpi_comp_id else None,
                              'comp_sen': f'Sentiment ({kpi_comp_name})' if kpi_comp_id else None,
                          }
+                         st.session_state.kpi_prompts_df = df_prompts
                          st.success("Fetched KPI Data.")
 
         if 'kpi_series_df' in st.session_state and st.session_state.kpi_series_df is not None:
@@ -1780,15 +1784,45 @@ elif current_page == "LLM Monitoring":
             
             val_columns = [c for c in df_plot.columns if c != 'Date']
             
+            period = 1
             # Apply rolling average if selected
             if rolling_avg == "Weekly (7-day)":
+                period = 7
                 for c in val_columns:
                     df_plot[c] = df_plot[c].rolling(window=7, min_periods=1).mean()
             elif rolling_avg == "Monthly (30-day)":
+                period = 30
                 for c in val_columns:
                     df_plot[c] = df_plot[c].rolling(window=30, min_periods=1).mean()
                 
             st.markdown("### Visibility & Sentiment Trends")
+            
+            # --- Score Cards ---
+            orig_df = st.session_state.kpi_series_df
+            p_vis_col = meta['primary_vis']
+            p_sen_col = meta['primary_sen']
+            
+            if len(orig_df) > 0:
+                calc_period = period if len(orig_df) >= period * 2 else max(1, len(orig_df) // 2)
+                if calc_period == 0: calc_period = len(orig_df)
+                
+                base_vis = orig_df[p_vis_col].iloc[:calc_period].mean()
+                base_sen = orig_df[p_sen_col].iloc[:calc_period].mean()
+                
+                curr_vis = orig_df[p_vis_col].iloc[-calc_period:].mean()
+                curr_sen = orig_df[p_sen_col].iloc[-calc_period:].mean()
+                
+                d_vis = curr_vis - base_vis
+                d_sen = curr_sen - base_sen
+                
+                p_vis = (d_vis / base_vis * 100) if base_vis > 0 else 0.0
+                p_sen = (d_sen / base_sen * 100) if base_sen > 0 else 0.0
+                
+                sc1, sc2 = st.columns(2)
+                with sc1:
+                    st.metric(f"Avg {p_vis_col} (Last {calc_period} entries)", f"{curr_vis:.1f}", f"{d_vis:+.1f} ({p_vis:+.1f}%)")
+                with sc2:
+                    st.metric(f"Avg {p_sen_col} (Last {calc_period} entries)", f"{curr_sen:.2f}", f"{d_sen:+.2f} ({p_sen:+.1f}%)")
             
             # --- Custom HTML Legend ---
             legend_html = "<div style='display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 20px; font-size: 14px; align-items: center;'>"
@@ -1891,6 +1925,278 @@ elif current_page == "LLM Monitoring":
                 st.warning("Please select at least one metric to visualize.")
             
             st.dataframe(df_plot, width="stretch", hide_index=True)
+            
+            # Display Prompts List
+            if 'kpi_prompts_df' in st.session_state and st.session_state.kpi_prompts_df is not None and not st.session_state.kpi_prompts_df.empty:
+                 num_prompts = len(st.session_state.kpi_prompts_df)
+                 with st.expander(f"View {num_prompts} Matched Prompts", expanded=False):
+                      st.dataframe(st.session_state.kpi_prompts_df, use_container_width=True, hide_index=True)
+            
+    with tab_comp_overview:
+        st.markdown("## 🏎️ Competitive Overview")
+        st.info("Analyze and plot your primary brand against its competitive landscape.")
+        
+        with st.container(border=True):
+            col_brand, col_tag, col_date, col_chk = st.columns([1, 1, 1, 1])
+            with col_brand:
+                brand_list = list(ACCURANKER_BRANDS.keys())
+                default_brand_ix = brand_list.index("Saxo DK") if "Saxo DK" in brand_list else 0
+                comp_brand_name = st.selectbox("Select Brand", brand_list, index=default_brand_ix, key="comp_ov_brand")
+                comp_brand_id = ACCURANKER_BRANDS[comp_brand_name]
+                
+            with col_tag:
+                accuranker_token = st.secrets.get("ACCURANKER_TOKEN")
+                comp_cache_key = f"tags_{comp_brand_id}"
+                
+                if comp_cache_key not in st.session_state:
+                     if accuranker_token:
+                          st.session_state[comp_cache_key] = backend.fetch_unique_tags(comp_brand_id, accuranker_token)
+                     else:
+                          st.session_state[comp_cache_key] = {}
+                          
+                tags_map = st.session_state.get(comp_cache_key, {})
+                tag_options = [f"{t} ({c})" for t, c in tags_map.items()]
+                
+                default_ix = 0
+                for i, opt in enumerate(tag_options):
+                    if "Commercial" in opt:
+                        default_ix = i
+                        break
+                        
+                comp_tag_val = st.selectbox("Select Tag (Optional)", ["All"] + tag_options, index=default_ix + 1 if tag_options else 0, key="comp_ov_tag")
+                comp_tag_clean = None if comp_tag_val == "All" else comp_tag_val.split(" (")[0] if " (" in str(comp_tag_val) else comp_tag_val
+                
+            with col_date:
+                from datetime import datetime, timedelta
+                comp_end = datetime.now()
+                comp_start = comp_end - timedelta(days=180)
+                comp_date_range = st.date_input("Date Range", value=(comp_start, comp_end), key="comp_ov_date")
+            
+            with col_chk:
+                st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
+                comp_latest = st.checkbox("Latest Snapshot Data", value=False, key="comp_ov_latest")
+                show_vector = st.checkbox("Show Competitive Vector", value=False, key="comp_ov_vector")
+
+            st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+            fetch_comp_btn = st.button("Generate Overview", type="primary", width="stretch", key="comp_ov_btn")
+            
+        if fetch_comp_btn:
+            if len(comp_date_range) != 2:
+                st.error("Please select both a start and end date.")
+            elif not accuranker_token:
+                st.error("Missing ACCURANKER_TOKEN in secrets.")
+            else:
+                s_date, e_date = comp_date_range
+                with st.spinner(f"Fetching Competitive Overview data..."):
+                    df_comp_raw = backend.fetch_competitive_overview(
+                        comp_brand_id,
+                        comp_brand_name,
+                        comp_tag_clean,
+                        s_date,
+                        e_date,
+                        accuranker_token
+                    )
+                    
+                    if df_comp_raw.empty:
+                        st.warning("No data found for the selected criteria.")
+                        st.session_state.comp_ov_df = None
+                    else:
+                        st.session_state.comp_ov_df = df_comp_raw
+                        st.session_state.comp_ov_latest_val = comp_latest
+                        
+                        # Build success message with vector period info
+                        msg = "Overview Generated."
+                        if show_vector:
+                            all_dates_sorted = df_comp_raw['Date'].sort_values()
+                            min_d = all_dates_sorted.iloc[0]
+                            max_d = all_dates_sorted.iloc[-1]
+                            first_end = (min_d + pd.Timedelta(days=7)).strftime('%Y-%m-%d')
+                            last_start = (max_d - pd.Timedelta(days=7)).strftime('%Y-%m-%d')
+                            msg += f" Vector compares **{min_d.strftime('%Y-%m-%d')} → {first_end}** vs **{last_start} → {max_d.strftime('%Y-%m-%d')}**."
+                        st.success(msg)
+                        
+        if 'comp_ov_df' in st.session_state and st.session_state.comp_ov_df is not None:
+            df_plot = st.session_state.comp_ov_df.copy()
+            is_latest = st.session_state.get('comp_ov_latest_val', False)
+            
+            if is_latest:
+                idx = df_plot.groupby(['Competitor', 'Domain'])['Date'].idxmax()
+                df_agg = df_plot.loc[idx]
+            else:
+                df_agg = df_plot.groupby(['Competitor', 'Domain'], as_index=False)[['Visibility', 'Sentiment']].mean()
+                
+            df_agg['Visibility'] = df_agg['Visibility'].round(1)
+            df_agg['Sentiment'] = df_agg['Sentiment'].round(1)
+
+            st.markdown("### Visibility vs Sentiment")
+            
+            # Box coords (x >= 75, y >= 62) to max 100
+            box_data = pd.DataFrame([{
+                'x_start': 75, 'x_end': 100,
+                'y_start': 62, 'y_end': 100
+            }])
+            
+            quad_box = alt.Chart(box_data).mark_rect(
+                color='#2ecc71', opacity=0.15
+            ).encode(
+                x=alt.X('x_start:Q', scale=alt.Scale(domain=[0, 100])),
+                x2='x_end:Q',
+                y=alt.Y('y_start:Q', scale=alt.Scale(domain=[0, 100])),
+                y2='y_end:Q'
+            )
+            
+            import base64
+            import os
+            def get_favicon_b64(domain):
+                if pd.isna(domain) or not domain:
+                    return None
+                path = os.path.join("assets", "favicons", f"{domain}.png")
+                if os.path.exists(path):
+                    with open(path, "rb") as image_file:
+                        encoded_string = base64.b64encode(image_file.read()).decode()
+                        return f"data:image/png;base64,{encoded_string}"
+                return None
+                
+            df_agg['FaviconBase64'] = df_agg['Domain'].apply(get_favicon_b64)
+            
+            scatter_layers = [quad_box]
+            
+            # --- Competitive Vector Logic ---
+            if show_vector and not df_plot.empty and 'Date' in df_plot.columns:
+                all_dates = df_plot['Date'].sort_values().unique()
+                if len(all_dates) >= 2:
+                    # First 7 days and last 7 days
+                    min_date = pd.Timestamp(all_dates[0])
+                    max_date = pd.Timestamp(all_dates[-1])
+                    first_cutoff = min_date + pd.Timedelta(days=7)
+                    last_cutoff = max_date - pd.Timedelta(days=7)
+                    
+                    df_first = df_plot[df_plot['Date'] <= first_cutoff].groupby(['Competitor', 'Domain'], as_index=False)[['Visibility', 'Sentiment']].mean()
+                    df_last = df_plot[df_plot['Date'] >= last_cutoff].groupby(['Competitor', 'Domain'], as_index=False)[['Visibility', 'Sentiment']].mean()
+                    
+                    df_first = df_first.rename(columns={'Visibility': 'Vis_old', 'Sentiment': 'Sen_old'})
+                    df_last = df_last.rename(columns={'Visibility': 'Vis_new', 'Sentiment': 'Sen_new'})
+                    
+                    df_vec = pd.merge(df_first, df_last, on=['Competitor', 'Domain'], how='inner')
+                    
+                    if not df_vec.empty:
+                        df_vec['Vis_old'] = df_vec['Vis_old'].round(1)
+                        df_vec['Sen_old'] = df_vec['Sen_old'].round(1)
+                        df_vec['Vis_new'] = df_vec['Vis_new'].round(1)
+                        df_vec['Sen_new'] = df_vec['Sen_new'].round(1)
+                        
+                        # Determine vector direction for color
+                        def get_vector_color(row):
+                            vis_improved = row['Vis_new'] > row['Vis_old']
+                            sen_improved = row['Sen_new'] > row['Sen_old']
+                            if vis_improved and sen_improved:
+                                return '#2ecc71'  # Green - both improved
+                            elif vis_improved or sen_improved:
+                                return '#f1c40f'  # Yellow - one improved
+                            else:
+                                return '#e74c3c'  # Red - both worsened
+                        
+                        df_vec['VectorColor'] = df_vec.apply(get_vector_color, axis=1)
+                        
+                        # Draw connecting lines (rules)
+                        lines = alt.Chart(df_vec).mark_rule(strokeWidth=2, opacity=0.7).encode(
+                            x=alt.X('Vis_old:Q'),
+                            y=alt.Y('Sen_old:Q'),
+                            x2='Vis_new:Q',
+                            y2='Sen_new:Q',
+                            color=alt.Color('VectorColor:N', scale=None),
+                            tooltip=['Competitor', 'Vis_old', 'Sen_old', 'Vis_new', 'Sen_new']
+                        )
+                        scatter_layers.append(lines)
+                        
+                        # Faded old position icons
+                        df_vec['FaviconBase64'] = df_vec['Domain'].apply(get_favicon_b64)
+                        df_vec_img = df_vec[df_vec['FaviconBase64'].notnull()]
+                        df_vec_no_img = df_vec[df_vec['FaviconBase64'].isnull()]
+                        
+                        if not df_vec_no_img.empty:
+                            old_circles = alt.Chart(df_vec_no_img).mark_circle(size=80, opacity=0.25).encode(
+                                x=alt.X('Vis_old:Q'),
+                                y=alt.Y('Sen_old:Q'),
+                                color=alt.Color('Competitor:N', legend=None),
+                                tooltip=['Competitor', alt.Tooltip('Vis_old:Q', title='Old Visibility'), alt.Tooltip('Sen_old:Q', title='Old Sentiment')]
+                            )
+                            scatter_layers.append(old_circles)
+                        
+                        if not df_vec_img.empty:
+                            old_images = alt.Chart(df_vec_img).mark_image(
+                                width=24, height=24, opacity=0.25
+                            ).encode(
+                                x=alt.X('Vis_old:Q'),
+                                y=alt.Y('Sen_old:Q'),
+                                url='FaviconBase64:N',
+                                tooltip=['Competitor', alt.Tooltip('Vis_old:Q', title='Old Visibility'), alt.Tooltip('Sen_old:Q', title='Old Sentiment')]
+                            )
+                            scatter_layers.append(old_images)
+            
+                        # Override df_agg so current icons match the line endpoints
+                        df_vec_current = df_vec[['Competitor', 'Domain', 'Vis_new', 'Sen_new', 'Vis_old', 'Sen_old']].rename(
+                            columns={'Vis_new': 'Visibility', 'Sen_new': 'Sentiment'}
+                        )
+                        df_vec_current['Δ Visibility'] = (df_vec_current['Visibility'] - df_vec_current['Vis_old']).round(1)
+                        df_vec_current['Δ Sentiment'] = (df_vec_current['Sentiment'] - df_vec_current['Sen_old']).round(1)
+                        df_vec_current = df_vec_current.drop(columns=['Vis_old', 'Sen_old'])
+                        df_vec_current['FaviconBase64'] = df_vec_current['Domain'].apply(get_favicon_b64)
+                        df_agg = df_vec_current
+                        _vector_active = True
+            
+            # --- Current position marks (on top) ---
+            df_with_img = df_agg[df_agg['FaviconBase64'].notnull()]
+            df_no_img = df_agg[df_agg['FaviconBase64'].isnull()]
+            
+            # Build tooltip list based on whether vector deltas are available
+            _vector_active = 'Δ Visibility' in df_agg.columns
+            if _vector_active:
+                current_tooltip = ['Competitor', 'Domain', 'Visibility', 'Sentiment',
+                                   alt.Tooltip('Δ Visibility:Q', format='+.1f'),
+                                   alt.Tooltip('Δ Sentiment:Q', format='+.1f')]
+            else:
+                current_tooltip = ['Competitor', 'Domain', 'Visibility', 'Sentiment']
+            
+            if not df_no_img.empty:
+                points = alt.Chart(df_no_img).mark_circle(size=100, opacity=0.8).encode(
+                    x=alt.X('Visibility:Q', title='Visibility (0-100)'),
+                    y=alt.Y('Sentiment:Q', title='Sentiment (0-100)'),
+                    color=alt.Color('Competitor:N', legend=None),
+                    tooltip=current_tooltip
+                )
+                scatter_layers.append(points)
+                
+            if not df_with_img.empty:
+                images = alt.Chart(df_with_img).mark_image(
+                    width=24, height=24
+                ).encode(
+                    x=alt.X('Visibility:Q', title='Visibility (0-100)'),
+                    y=alt.Y('Sentiment:Q', title='Sentiment (0-100)'),
+                    url='FaviconBase64:N',
+                    tooltip=current_tooltip
+                )
+                scatter_layers.append(images)
+            
+            chart = alt.layer(*scatter_layers).resolve_scale(
+                x='shared', y='shared'
+            ).properties(
+                height=600
+            ).interactive()
+            
+            st.altair_chart(chart, use_container_width=True)
+            
+            # Warn about missing favicons
+            missing_favs = df_agg[df_agg['FaviconBase64'].isnull()]
+            if not missing_favs.empty:
+                missing_names = missing_favs[['Competitor', 'Domain']].drop_duplicates()
+                missing_list = ', '.join([f"{row['Competitor']} ({row['Domain']})" for _, row in missing_names.iterrows()])
+                st.warning(f"⚠️ Missing favicons for: {missing_list}. These competitors are shown as colored dots instead of icons.")
+            
+            st.markdown("### Competitive Data")
+            df_table = df_agg[['Competitor', 'Domain', 'Visibility', 'Sentiment']].copy()
+            df_table = df_table.sort_values(by='Visibility', ascending=False)
+            st.dataframe(df_table, use_container_width=True, hide_index=True, height=500)
             
     with tab_cross_market:
         st.markdown("## 🌍 Cross Market Analysis")
@@ -2510,8 +2816,8 @@ elif current_page == "LLM Monitoring":
              df_chart = df_disp[['Domain', 'Domain Cited (%)']].drop_duplicates()
              if not df_chart.empty:
                  max_domains = len(df_chart)
-                 num_results = st.slider("Number of domains to show in chart", min_value=1, max_value=max_domains, value=min(50, max_domains))
-                 df_chart_filtered = df_chart.head(num_results)
+                 num_results = st.slider("Number of domains to show in chart", min_value=1, max_value=max_domains, value=(1, min(50, max_domains)))
+                 df_chart_filtered = df_chart.iloc[num_results[0]-1:num_results[1]]
 
                  chart = alt.Chart(df_chart_filtered).mark_bar(color='#3498db').encode(
                      x=alt.X('Domain:N', sort='-y', axis=alt.Axis(labelAngle=-45, title='Domain')),

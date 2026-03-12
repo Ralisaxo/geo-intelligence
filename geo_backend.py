@@ -1760,10 +1760,10 @@ def categorize_website(url):
 def fetch_kpi_time_series(brand_id, tag, start_date, end_date, api_token):
     """
     Fetches historical KPI data (Visibility and Sentiment) from AccuRanker for a given brand and tag.
-    Returns: A Pandas DataFrame indexed by Date.
+    Returns: A tuple (Pandas DataFrame indexed by Date, Pandas DataFrame of unique prompts).
     """
     if not brand_id or not api_token or not start_date or not end_date:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
 
     url = f"https://app.accuranker.com/api/v4/brands/{brand_id}/prompts/"
     headers = {
@@ -1802,16 +1802,26 @@ def fetch_kpi_time_series(brand_id, tag, start_date, end_date, api_token):
 
     except Exception as e:
         print(f"API Error fetching KPI series: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
 
     tag_lower = tag.lower() if tag else None
     
     data_by_date = {}
+    unique_prompts = []
 
     for p in all_prompts:
         p_tags = [t.lower() for t in (p.get('tags') or [])]
         if tag_lower and tag_lower not in p_tags:
             continue
+            
+        # Collect prompt
+        prompt_text = p.get('prompt', '')
+        if prompt_text and not any(up['Prompt'] == prompt_text for up in unique_prompts):
+            tags_str = ", ".join(p.get('tags', []))
+            unique_prompts.append({
+                "Prompt": prompt_text,
+                "Tags": tags_str
+            })
             
         results = p.get('results', [])
         for r in results:
@@ -1893,6 +1903,118 @@ def fetch_kpi_time_series(brand_id, tag, start_date, end_date, api_token):
         df['Date'] = pd.to_datetime(df['Date'])
         df = df.sort_values('Date')
         
+    df_prompts = pd.DataFrame(unique_prompts)
+    return df, df_prompts
+
+def fetch_competitive_overview(brand_id, brand_name, tag, start_date, end_date, api_token):
+    """
+    Fetches raw historical KPI data for ALL competitors and the primary brand.
+    Returns a long-form DataFrame with columns: Date | Competitor | Domain | Visibility | Sentiment.
+    """
+    if not brand_id or not api_token or not start_date or not end_date:
+        return pd.DataFrame()
+
+    url = f"https://app.accuranker.com/api/v4/brands/{brand_id}/prompts/"
+    headers = {
+        "Authorization": f"Token {api_token}",
+        "Accept": "application/json",
+    }
+    
+    params = {
+        "fields": "tags,results.created_at,results.brands.visibility,results.brands.sentiment,results.brands.is_own,results.brands.competitor.display_name,results.brands.competitor.domain",
+        "limit": 1000,
+        "period_from": start_date.strftime("%Y-%m-%d") if hasattr(start_date, 'strftime') else start_date,
+        "period_to": end_date.strftime("%Y-%m-%d") if hasattr(end_date, 'strftime') else end_date
+    }
+    
+    all_prompts = []
+    
+    try:
+        while url:
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            chunk = data if isinstance(data, list) else data.get('results', [])
+            all_prompts.extend(chunk)
+            
+            url = None if isinstance(data, list) else data.get('next')
+            if url: params = None
+            
+            if len(all_prompts) > 10000:
+                break
+    except Exception as e:
+        print(f"API Error fetching competitive overview: {e}")
+        return pd.DataFrame()
+
+    tag_lower = tag.lower() if tag else None
+    data_by_date = {}
+
+    for p in all_prompts:
+        p_tags = [t.lower() for t in (p.get('tags') or [])]
+        if tag_lower and tag_lower not in p_tags:
+            continue
+            
+        results = p.get('results', [])
+        for r in results:
+            date_str = r.get('created_at', '')[:10]
+            if not date_str: continue
+            
+            if date_str not in data_by_date:
+                data_by_date[date_str] = {'_total_prompts': 0}
+                
+            data_by_date[date_str]['_total_prompts'] += 1
+            
+            brands = r.get('brands', [])
+            for b in brands:
+                is_own = b.get('is_own')
+                comp = b.get('competitor')
+                
+                if is_own:
+                    entity_name = brand_name
+                    domain = "home.saxo" # Default Saxo domain
+                elif comp:
+                    entity_name = comp.get('display_name', 'Unknown')
+                    domain = comp.get('domain', '')
+                else:
+                    continue
+                    
+                visi = b.get('visibility')
+                sent = b.get('sentiment')
+                visi = float(visi) if visi is not None else 0.0
+                sent = float(sent) if sent is not None else 0.0
+                
+                key = (entity_name, domain)
+                if key not in data_by_date[date_str]:
+                     data_by_date[date_str][key] = {'visi_sum': 0.0, 'visi_count': 0, 'sent_sum': 0.0, 'sent_count': 0}
+                    
+                data_by_date[date_str][key]['visi_sum'] += visi
+                data_by_date[date_str][key]['visi_count'] += 1
+                if visi > 0:
+                    data_by_date[date_str][key]['sent_sum'] += sent
+                    data_by_date[date_str][key]['sent_count'] += 1
+                    
+    records = []
+    for date_str, entities in data_by_date.items():
+        total_p = entities.pop('_total_prompts', 1)
+        for (entity_name, domain), aggs in entities.items():
+             v_count = aggs['visi_count']
+             s_count = aggs['sent_count']
+             if v_count > 0:
+                 avg_visi = aggs['visi_sum'] / total_p
+                 avg_sent = (aggs['sent_sum'] / s_count) if s_count > 0 else 0.0
+                 records.append({
+                     'Date': date_str,
+                     'Competitor': entity_name,
+                     'Domain': domain,
+                     'Visibility': avg_visi,
+                     'Sentiment': avg_sent
+                 })
+                 
+    df = pd.DataFrame(records)
+    if not df.empty:
+        df['Date'] = pd.to_datetime(df['Date'])
+    
     return df
 
 def fetch_cross_market_data(brand_id, tag, start_date, end_date, api_token):
