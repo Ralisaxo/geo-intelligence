@@ -2028,6 +2028,18 @@ elif current_page == "LLM Monitoring":
             df_agg['Visibility'] = df_agg['Visibility'].round(1)
             df_agg['Sentiment'] = df_agg['Sentiment'].round(1)
 
+            # --- Top N filter ---
+            total_competitors = len(df_agg)
+            if total_competitors > 3:
+                top_n = st.slider("Show Top N Competitors (by Visibility)", min_value=3, max_value=total_competitors, value=total_competitors, key="comp_ov_topn")
+                # Always keep own brand, then fill with top N by visibility
+                own_brand_rows = df_agg[df_agg['Competitor'] == comp_brand_name]
+                other_rows = df_agg[df_agg['Competitor'] != comp_brand_name].nlargest(top_n, 'Visibility')
+                df_agg = pd.concat([own_brand_rows, other_rows]).drop_duplicates(subset=['Competitor', 'Domain'])
+                # Also filter df_plot so vector logic only uses visible competitors
+                visible_competitors = set(df_agg['Competitor'].unique())
+                df_plot = df_plot[df_plot['Competitor'].isin(visible_competitors)]
+
             st.markdown("### Visibility vs Sentiment")
             
             # Box coords (x >= 75, y >= 62) to max 100
@@ -2181,7 +2193,7 @@ elif current_page == "LLM Monitoring":
             chart = alt.layer(*scatter_layers).resolve_scale(
                 x='shared', y='shared'
             ).properties(
-                height=600
+                height=800
             ).interactive()
             
             st.altair_chart(chart, use_container_width=True)
