@@ -2206,9 +2206,61 @@ elif current_page == "LLM Monitoring":
                 st.warning(f"⚠️ Missing favicons for: {missing_list}. These competitors are shown as colored dots instead of icons.")
             
             st.markdown("### Competitive Data")
-            df_table = df_agg[['Competitor', 'Domain', 'Visibility', 'Sentiment']].copy()
+            table_cols = ['Competitor', 'Domain', 'Visibility', 'Sentiment']
+            if 'Δ Visibility' in df_agg.columns:
+                table_cols += ['Δ Visibility', 'Δ Sentiment']
+            df_table = df_agg[table_cols].copy()
             df_table = df_table.sort_values(by='Visibility', ascending=False)
             st.dataframe(df_table, use_container_width=True, hide_index=True, height=500)
+            
+            # --- AI Analysis ---
+            st.markdown("#### 🤖 AI Strategic Analysis")
+            ai_state_key = "comp_ov_ai_analysis"
+            
+            if ai_state_key in st.session_state:
+                st.info(st.session_state[ai_state_key]["text"], icon="🧠")
+                st.caption(f"Estimated Cost: ${st.session_state[ai_state_key]['cost']:.4f} (~{st.session_state[ai_state_key]['tokens']} input tokens)")
+                if st.button("Clear AI Analysis", key="btn_clear_comp_ov_ai"):
+                    del st.session_state[ai_state_key]
+                    st.rerun()
+            else:
+                if st.button("🤖 Analyze with AI", type="primary", key="btn_comp_ov_ai"):
+                    with st.spinner("Analyzing competitive landscape with GPT-4o..."):
+                        try:
+                            md_table = df_table.to_csv(index=False)
+                            prompt_path = "prompts/competitive_overview_analysis.txt"
+                            try:
+                                with open(prompt_path, "r", encoding="utf-8") as f:
+                                    sys_prompt = f.read()
+                            except FileNotFoundError:
+                                sys_prompt = "Analyze this competitive visibility and sentiment data and provide strategic GEO insights."
+                            
+                            # Build date context
+                            date_context = f"Data period: {comp_date_range[0]} to {comp_date_range[1]}."
+                            if show_vector and not df_plot.empty and 'Date' in df_plot.columns:
+                                all_d = df_plot['Date'].sort_values()
+                                min_d = all_d.iloc[0]
+                                max_d = all_d.iloc[-1]
+                                date_context += f"\nVector comparison: first 7 days ({min_d.strftime('%Y-%m-%d')} to {(min_d + pd.Timedelta(days=7)).strftime('%Y-%m-%d')}) vs last 7 days ({(max_d - pd.Timedelta(days=7)).strftime('%Y-%m-%d')} to {max_d.strftime('%Y-%m-%d')})."
+                            
+                            user_prompt = f"{date_context}\n\nHere is the competitive overview data:\n\n{md_table}"
+                            in_tokens, est_cost = estimate_tokens_and_cost([sys_prompt, user_prompt])
+                            
+                            response = client.chat.completions.create(
+                                model="gpt-4o",
+                                messages=[
+                                    {"role": "system", "content": sys_prompt},
+                                    {"role": "user", "content": user_prompt}
+                                ],
+                                temperature=0.7,
+                                max_tokens=1000,
+                                stream=True
+                            )
+                            
+                            analysis_text = st.write_stream(response)
+                            st.session_state[ai_state_key] = {"text": analysis_text, "cost": est_cost, "tokens": in_tokens}
+                        except Exception as e:
+                            st.error(f"AI Analysis failed: {e}")
             
     with tab_cross_market:
         st.markdown("## 🌍 Cross Market Analysis")
