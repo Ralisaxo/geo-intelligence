@@ -11,3 +11,4 @@ tiktoken
 beautifulsoup4
 lxml
 openpyxl
+plotly

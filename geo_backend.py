@@ -964,6 +964,31 @@ def analyze_reddit_sentiment(context_text, client, target_brand="Saxo Bank", mod
     except Exception as e:
         return {"sentiment": "Error", "summary": str(e)}
 
+def generate_general_market_sentiment(analyzed_threads_data, client, model="gpt-4o"):
+    """
+    Generates a general market sentiment report based on a list of analyzed Reddit threads.
+    """
+    prompt_template = load_prompt_file("prompts/general_market_sentiment.txt")
+    
+    # Format the data for the LLM
+    import json
+    formatted_data = json.dumps(analyzed_threads_data, indent=2)
+    
+    system_prompt = prompt_template.replace("{input_data}", formatted_data)
+    
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "Please generate the market sentiment report based on the provided data."}
+            ]
+        )
+        
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Error generating market sentiment: {str(e)}"
+
 def search_reddit(query, sort_by="relevance", time_filter="year", limit=5, reddit_client=None):
     """
     Searches Reddit for threads matching the query.
@@ -2131,3 +2156,185 @@ def fetch_cross_market_data(brand_id, tag, start_date, end_date, api_token):
             }
             
     return final_data
+
+# -----------------------------------------------------------------------------
+# SEMANTIC POSITIONING MAP FUNCTIONS
+# -----------------------------------------------------------------------------
+
+def fetch_competitor_names(brand_id, api_token):
+    """
+    Fetches unique competitor display names from AccuRanker for a given brand.
+    Competitors are shared across all tags, so no tag/date filter is needed.
+    Always appends 'Saxo Bank' to the list.
+    Returns: List of unique brand/competitor name strings.
+    """
+    if not brand_id or not api_token:
+        return ["Saxo Bank"]
+
+    url = f"https://app.accuranker.com/api/v4/brands/{brand_id}/prompts/"
+    headers = {
+        "Authorization": f"Token {api_token}",
+        "Accept": "application/json",
+    }
+    
+    params = {
+        "fields": "results.brands.is_own,results.brands.competitor.display_name",
+        "limit": 1000
+    }
+    
+    all_prompts = []
+    
+    try:
+        while url:
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            chunk = data if isinstance(data, list) else data.get('results', [])
+            all_prompts.extend(chunk)
+            
+            url = None if isinstance(data, list) else data.get('next')
+            if url: params = None
+            
+            if len(all_prompts) > 10000:
+                break
+    except Exception as e:
+        print(f"API Error fetching competitor names: {e}")
+        return ["Saxo Bank"]
+
+    competitor_names = set()
+
+    for p in all_prompts:
+        results = p.get('results', [])
+        for r in results:
+            brands = r.get('brands', [])
+            for b in brands:
+                is_own = b.get('is_own')
+                comp = b.get('competitor')
+                
+                if not is_own and comp:
+                    name = comp.get('display_name')
+                    if name:
+                        competitor_names.add(name)
+    
+    # Always include Saxo Bank
+    competitor_names.add("Saxo Bank")
+    
+    return sorted(list(competitor_names))
+
+
+def get_embeddings(text_list, model_choice, api_keys):
+    """
+    Gets embeddings for a list of texts using either OpenAI or Google.
+    
+    Args:
+        text_list: List of strings to embed.
+        model_choice: 'openai' or 'google'.
+        api_keys: Dict with 'openai' and/or 'google' keys.
+    
+    Returns: List of embedding vectors (list of floats each).
+    """
+    if not text_list:
+        return []
+    
+    if model_choice == "openai":
+        from openai import OpenAI
+        client = OpenAI(api_key=api_keys.get('openai'))
+        
+        response = client.embeddings.create(
+            input=text_list,
+            model="text-embedding-3-small"
+        )
+        
+        # Sort by index to maintain order
+        sorted_data = sorted(response.data, key=lambda x: x.index)
+        return [item.embedding for item in sorted_data]
+    
+    else:  # google
+        client = genai.Client(api_key=api_keys.get('google'))
+        
+        response = client.models.embed_content(
+            model="models/gemini-embedding-001",
+            contents=text_list,
+            config=types.EmbedContentConfig(
+                task_type="SEMANTIC_SIMILARITY"
+            )
+        )
+        
+        return [emb.values for emb in response.embeddings]
+
+
+def compute_similarity_matrix(brand_embeddings, feature_embeddings, brand_names, feature_names):
+    """
+    Computes cosine similarity matrix between brand and feature embeddings.
+    
+    Returns: pd.DataFrame with brands as rows and features as columns.
+    """
+    from sklearn.metrics.pairwise import cosine_similarity
+    
+    brand_matrix = np.array(brand_embeddings)
+    feature_matrix = np.array(feature_embeddings)
+    
+    sim_matrix = cosine_similarity(brand_matrix, feature_matrix)
+    
+    df = pd.DataFrame(sim_matrix, index=brand_names, columns=feature_names)
+    df.index.name = "Brand"
+    
+    return df
+
+
+def get_context_wrapped_embeddings(text_list, model_choice, api_keys):
+    """
+    Wraps each text item in a standardized financial context before embedding.
+    This solves the 'entity trap' where brands and features cluster by type
+    rather than by semantic similarity.
+    
+    Returns: List of embedding vectors.
+    """
+    wrapped = [
+        f"The concept of {item} within the online trading, investing, and wealth management industry."
+        for item in text_list
+    ]
+    return get_embeddings(wrapped, model_choice, api_keys)
+
+
+def compute_quadrant_coordinates(brand_embeddings, anchor_embeddings, brand_names):
+    """
+    Computes Z-score standardized X/Y coordinates for brands based on 4 anchor concepts.
+    The center (0,0) represents the market average for the cohort.
+    
+    Args:
+        brand_embeddings: List of brand embedding vectors.
+        anchor_embeddings: List of 4 anchor embedding vectors in order:
+                          [x_left, x_right, y_bottom, y_top]
+        brand_names: List of brand name strings.
+    
+    Returns: pd.DataFrame with columns: Brand, X, Y
+    """
+    from sklearn.metrics.pairwise import cosine_similarity
+    
+    brand_matrix = np.array(brand_embeddings)
+    anchor_matrix = np.array(anchor_embeddings)
+    
+    # Similarity of each brand to each anchor: shape (n_brands, 4)
+    sims = cosine_similarity(brand_matrix, anchor_matrix)
+    
+    # Raw coordinates: differential similarity
+    raw_x = sims[:, 1] - sims[:, 0]  # sim_right - sim_left
+    raw_y = sims[:, 3] - sims[:, 2]  # sim_top - sim_bottom
+    
+    # Z-score standardization: center on cohort mean, scale by std
+    mean_x, std_x = np.mean(raw_x), np.std(raw_x)
+    mean_y, std_y = np.mean(raw_y), np.std(raw_y)
+    
+    # Safety: avoid division by zero if std is 0 (e.g. single brand)
+    x_coords = (raw_x - mean_x) / std_x if std_x > 0 else np.zeros_like(raw_x)
+    y_coords = (raw_y - mean_y) / std_y if std_y > 0 else np.zeros_like(raw_y)
+    
+    df = pd.DataFrame({
+        "Brand": brand_names,
+        "X": x_coords,
+        "Y": y_coords
+    })
+    
+    return df

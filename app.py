@@ -517,7 +517,7 @@ elif current_page == "Knowledge Management":
 
 # --- PAGE: SEMANTIC TRIPLES ---
 elif current_page == "Semantic Triples":
-    tab5, tab7 = st.tabs(["📐 Semantic Alignment Lab", "☁️ AI Word Cloud"])
+    tab5, tab7, tab_sem_pos = st.tabs(["📐 Semantic Alignment Lab", "☁️ AI Word Cloud", "🗺️ Semantic Positioning"])
 
     with tab5:
             st.markdown("#### 📐 Semantic Alignment Lab")
@@ -1139,6 +1139,376 @@ elif current_page == "Semantic Triples":
                     del st.session_state['wc_images']
                     st.rerun()
 
+    with tab_sem_pos:
+        st.markdown("#### 🗺️ Semantic Positioning Map")
+        st.info("Extract competitors from AccuRanker, compare them against product features using embeddings, and visualize the semantic distance.")
+
+        # --- Brand Dictionary (reused from LLM Monitoring) ---
+        SEM_POS_BRANDS = {
+            "GEO Experiments": 10000419,
+            "Saxo BE": 10000083,
+            "Saxo CH": 10000084,
+            "Saxo CZ": 10000085,
+            "Saxo DK": 10000087,
+            "Saxo FR": 10000090,
+            "Saxo Institutional": 10000275,
+            "Saxo IT": 10000092,
+            "Saxo JP": 10000095,
+            "Saxo MENA": 10000120,
+            "Saxo NL": 10000097,
+            "Saxo PL": 10000117,
+            "Saxo SG": 10000124,
+            "Saxo UK": 10000079
+        }
+
+        with st.container(border=True):
+            sp_col_brand, sp_col_features, sp_col_model = st.columns([1, 2, 1])
+
+            with sp_col_brand:
+                sp_brand_list = list(SEM_POS_BRANDS.keys())
+                sp_default_ix = sp_brand_list.index("Saxo DK") if "Saxo DK" in sp_brand_list else 0
+                sp_brand_name = st.selectbox("Select Market/Brand", sp_brand_list, index=sp_default_ix, key="sp_brand")
+                sp_brand_id = SEM_POS_BRANDS[sp_brand_name]
+                sp_accuranker_token = st.secrets.get("ACCURANKER_TOKEN")
+
+            with sp_col_features:
+                default_features = backend.load_prompt_file("prompts/product_features.txt")
+                if "Error:" in default_features:
+                    default_features = "forex broker\ninvestment platform\ntrading platform"
+                sp_features_text = st.text_area("Product Features (one per line)", value=default_features, height=180, key="sp_features")
+
+            with sp_col_model:
+                sp_model_choice = st.radio(
+                    "Embedding Model",
+                    ["Google (gemini-embedding-001)", "OpenAI (text-embedding-3-small)"],
+                    key="sp_model"
+                )
+
+            st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+            sp_generate_btn = st.button("Generate Positioning Map", type="primary", width="stretch", key="sp_generate")
+
+        # --- Execution Logic ---
+        if sp_generate_btn:
+            if not sp_accuranker_token:
+                st.error("Missing ACCURANKER_TOKEN in .streamlit/secrets.toml")
+            else:
+
+                # Parse features
+                sp_features = [f.strip() for f in sp_features_text.split('\n') if f.strip()]
+                if not sp_features:
+                    st.error("Please enter at least one product feature.")
+                else:
+                    # Determine model
+                    if "OpenAI" in sp_model_choice:
+                        sp_model_key = "openai"
+                    else:
+                        sp_model_key = "google"
+
+                    # Gather API keys
+                    sp_api_keys = {
+                        "openai": st.secrets.get("OPENAI_API_KEY"),
+                        "google": st.secrets.get("GEMINI_API_KEY")
+                    }
+
+                    # Check required key
+                    required_key = sp_api_keys.get(sp_model_key)
+                    if not required_key:
+                        st.error(f"Missing API key for {sp_model_key.upper()} in .streamlit/secrets.toml")
+                    else:
+                        progress = st.progress(0, text="Fetching competitors from AccuRanker...")
+
+                        # 1. Fetch Competitors (no tag/date needed)
+                        brand_names = backend.fetch_competitor_names(
+                            sp_brand_id, sp_accuranker_token
+                        )
+                        progress.progress(20, text=f"Found {len(brand_names)} brands. Computing embeddings...")
+
+                        try:
+                            # 2. Get raw embeddings (for quadrant map & similarity matrix)
+                            brand_embeddings = backend.get_embeddings(brand_names, sp_model_key, sp_api_keys)
+                            progress.progress(30, text="Brand embeddings done. Computing feature embeddings...")
+
+                            feature_embeddings = backend.get_embeddings(sp_features, sp_model_key, sp_api_keys)
+                            progress.progress(50, text="Computing context-wrapped embeddings for Gravity Map...")
+
+                            # 3. Get context-wrapped embeddings (for gravity map)
+                            wrapped_brand_emb = backend.get_context_wrapped_embeddings(brand_names, sp_model_key, sp_api_keys)
+                            wrapped_feature_emb = backend.get_context_wrapped_embeddings(sp_features, sp_model_key, sp_api_keys)
+                            progress.progress(80, text="Computing similarity matrix...")
+
+                            # 4. Compute similarity matrix (using raw embeddings)
+                            sim_df = backend.compute_similarity_matrix(
+                                brand_embeddings, feature_embeddings, brand_names, sp_features
+                            )
+
+                            # 5. Store results in session state
+                            st.session_state['sp_sim_df'] = sim_df
+                            st.session_state['sp_brand_embeddings'] = brand_embeddings
+                            st.session_state['sp_feature_embeddings'] = feature_embeddings
+                            st.session_state['sp_wrapped_brand_emb'] = wrapped_brand_emb
+                            st.session_state['sp_wrapped_feature_emb'] = wrapped_feature_emb
+                            st.session_state['sp_brand_names'] = brand_names
+                            st.session_state['sp_feature_names'] = sp_features
+                            st.session_state['sp_model_used'] = sp_model_choice
+                            st.session_state['sp_model_key'] = sp_model_key
+                            st.session_state['sp_api_keys'] = sp_api_keys
+
+                            progress.progress(100, text="Done!")
+                            time.sleep(0.5)
+                            st.rerun()
+
+                        except Exception as e:
+                            progress.empty()
+                            st.error(f"Error generating positioning map: {e}")
+
+        # --- Visualizations ---
+        if 'sp_sim_df' in st.session_state:
+            import plotly.express as px
+            import plotly.graph_objects as go
+            import numpy as np
+
+            sim_df = st.session_state['sp_sim_df']
+            brand_names = st.session_state['sp_brand_names']
+            feature_names = st.session_state['sp_feature_names']
+            brand_embeddings = st.session_state['sp_brand_embeddings']
+            feature_embeddings = st.session_state['sp_feature_embeddings']
+            wrapped_brand_emb = st.session_state.get('sp_wrapped_brand_emb', brand_embeddings)
+            wrapped_feature_emb = st.session_state.get('sp_wrapped_feature_emb', feature_embeddings)
+
+            st.success(f"Positioning Map generated using **{st.session_state.get('sp_model_used', 'N/A')}** — {len(brand_names)} brands × {len(feature_names)} features.")
+
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # MAP 1: SEMANTIC GRAVITY MAP (Context-Wrapped MDS)
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            st.markdown("### 🌌 1. Semantic Gravity Map")
+            st.markdown(
+                "This map uses **Multidimensional Scaling (MDS)** to show the natural 'gravitational pull' "
+                "between brands and product features. To ensure accurate comparisons, all items are wrapped "
+                "in a standardized financial context before analysis."
+            )
+
+            from sklearn.manifold import MDS
+            from sklearn.metrics.pairwise import cosine_similarity as cs_sim
+
+            all_embeddings = np.array(wrapped_brand_emb + wrapped_feature_emb)
+            all_labels = brand_names + feature_names
+
+            # Assign types: Saxo Bank gets its own category
+            all_types = []
+            for name in brand_names:
+                if name == "Saxo Bank":
+                    all_types.append("Saxo Bank")
+                else:
+                    all_types.append("Competitor")
+            all_types += ["Feature"] * len(feature_names)
+
+            # Compute pairwise cosine distance matrix (1 - similarity)
+            cos_sim_matrix = cs_sim(all_embeddings)
+            cos_dist = 1.0 - cos_sim_matrix
+            np.fill_diagonal(cos_dist, 0.0)
+            cos_dist = np.clip(cos_dist, 0, None)
+
+            mds = MDS(n_components=2, dissimilarity='precomputed', random_state=42, normalized_stress='auto')
+            coords = mds.fit_transform(cos_dist)
+
+            scatter_df = pd.DataFrame({
+                "X": coords[:, 0],
+                "Y": coords[:, 1],
+                "Label": all_labels,
+                "Type": all_types
+            })
+
+            fig_gravity = px.scatter(
+                scatter_df,
+                x="X", y="Y",
+                color="Type",
+                symbol="Type",
+                text="Label",
+                color_discrete_map={"Competitor": "#3498db", "Feature": "#e74c3c", "Saxo Bank": "#f1c40f"},
+                symbol_map={"Competitor": "circle", "Feature": "diamond", "Saxo Bank": "star"},
+                hover_data={"Label": True, "Type": True, "X": ":.4f", "Y": ":.4f"}
+            )
+            fig_gravity.update_traces(textposition="top center", marker=dict(size=12))
+            for trace in fig_gravity.data:
+                if trace.name == "Saxo Bank":
+                    trace.marker.size = 18
+            fig_gravity.update_layout(
+                height=700,
+                xaxis_title="Dimension 1",
+                yaxis_title="Dimension 2",
+                legend_title="Type",
+                margin=dict(l=10, r=10, t=30, b=10)
+            )
+            st.plotly_chart(fig_gravity, use_container_width=True)
+
+            st.markdown("---")
+
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # MAP 2: STRATEGIC QUADRANT MAP (Anchor Axes)
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            st.markdown("### 🎯 2. Strategic Quadrant Map")
+            st.markdown(
+                "This map plots competitors on a strict, **user-defined strategic matrix**. "
+                "It calculates how strongly each brand aligns with the specific concepts anchoring the X and Y axes. "
+                "**Z-score standardization** is applied — the center (0,0) represents the market average for this "
+                "specific list of competitors. Brands are plotted based on how far they deviate from that average."
+            )
+
+            with st.container(border=True):
+                st.markdown("**Define the Axis Anchors:**")
+                q_col1, q_col2, q_col3, q_col4 = st.columns(4)
+                with q_col1:
+                    x_left = st.text_input("← X-Axis Left", value="Passive Investing", key="sp_x_left")
+                with q_col2:
+                    x_right = st.text_input("X-Axis Right →", value="Active Day Trading", key="sp_x_right")
+                with q_col3:
+                    y_bottom = st.text_input("↓ Y-Axis Bottom", value="Low Cost & Cheap", key="sp_y_bottom")
+                with q_col4:
+                    y_top = st.text_input("Y-Axis Top ↑", value="Premium & Expensive", key="sp_y_top")
+
+                quad_btn = st.button("Generate Quadrant Map", type="primary", width="stretch", key="sp_quad_generate")
+
+            if quad_btn:
+                if not all([x_left.strip(), x_right.strip(), y_bottom.strip(), y_top.strip()]):
+                    st.error("Please fill in all four axis anchors.")
+                else:
+                    sp_model_key = st.session_state.get('sp_model_key', 'google')
+                    sp_api_keys = st.session_state.get('sp_api_keys', {})
+
+                    with st.spinner("Computing quadrant coordinates..."):
+                        try:
+                            anchor_texts = [x_left.strip(), x_right.strip(), y_bottom.strip(), y_top.strip()]
+                            anchor_emb = backend.get_context_wrapped_embeddings(anchor_texts, sp_model_key, sp_api_keys)
+                            brand_emb_for_quad = backend.get_context_wrapped_embeddings(brand_names, sp_model_key, sp_api_keys)
+
+                            quad_df = backend.compute_quadrant_coordinates(brand_emb_for_quad, anchor_emb, brand_names)
+
+                            st.session_state['sp_quad_df'] = quad_df
+                            st.session_state['sp_quad_anchors'] = {
+                                'x_left': x_left.strip(), 'x_right': x_right.strip(),
+                                'y_bottom': y_bottom.strip(), 'y_top': y_top.strip()
+                            }
+                            st.rerun()
+
+                        except Exception as e:
+                            st.error(f"Error generating quadrant map: {e}")
+
+            if 'sp_quad_df' in st.session_state:
+                quad_df = st.session_state['sp_quad_df']
+                anchors = st.session_state['sp_quad_anchors']
+
+                # Assign types for color
+                quad_types = []
+                for name in quad_df['Brand']:
+                    if name == "Saxo Bank":
+                        quad_types.append("Saxo Bank")
+                    else:
+                        quad_types.append("Competitor")
+                quad_df['Type'] = quad_types
+
+                fig_quad = px.scatter(
+                    quad_df,
+                    x="X", y="Y",
+                    color="Type",
+                    symbol="Type",
+                    text="Brand",
+                    color_discrete_map={"Competitor": "#3498db", "Saxo Bank": "#f1c40f"},
+                    symbol_map={"Competitor": "circle", "Saxo Bank": "star"},
+                    hover_data={"Brand": True, "Type": True, "X": ":.4f", "Y": ":.4f"}
+                )
+                fig_quad.update_traces(textposition="top center", marker=dict(size=12))
+                for trace in fig_quad.data:
+                    if trace.name == "Saxo Bank":
+                        trace.marker.size = 18
+
+                # Force axes to cross at (0,0)
+                x_max = max(abs(quad_df['X'].min()), abs(quad_df['X'].max())) * 1.3
+                y_max = max(abs(quad_df['Y'].min()), abs(quad_df['Y'].max())) * 1.3
+
+                fig_quad.update_layout(
+                    height=700,
+                    xaxis=dict(
+                        zeroline=True, zerolinewidth=2, zerolinecolor='rgba(255,255,255,0.3)',
+                        range=[-x_max, x_max],
+                        title=None
+                    ),
+                    yaxis=dict(
+                        zeroline=True, zerolinewidth=2, zerolinecolor='rgba(255,255,255,0.3)',
+                        range=[-y_max, y_max],
+                        title=None
+                    ),
+                    legend_title="Type",
+                    margin=dict(l=10, r=10, t=30, b=10),
+                    # Axis label annotations at the edges
+                    annotations=[
+                        dict(x=-x_max * 0.95, y=0, text=f"← {anchors['x_left']}",
+                             showarrow=False, font=dict(size=13, color="#e74c3c"), xanchor="left"),
+                        dict(x=x_max * 0.95, y=0, text=f"{anchors['x_right']} →",
+                             showarrow=False, font=dict(size=13, color="#e74c3c"), xanchor="right"),
+                        dict(x=0, y=-y_max * 0.95, text=f"↓ {anchors['y_bottom']}",
+                             showarrow=False, font=dict(size=13, color="#2ecc71"), yanchor="bottom"),
+                        dict(x=0, y=y_max * 0.95, text=f"{anchors['y_top']} ↑",
+                             showarrow=False, font=dict(size=13, color="#2ecc71"), yanchor="top"),
+                    ]
+                )
+                st.plotly_chart(fig_quad, use_container_width=True)
+
+            st.markdown("---")
+
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # SECTION 3: HEATMAP + DATA TABLE + CSV
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            st.markdown("### 🔥 Similarity Heatmap")
+
+            fig_heatmap = px.imshow(
+                sim_df.values,
+                labels=dict(x="Feature", y="Brand", color="Cosine Similarity"),
+                x=list(sim_df.columns),
+                y=list(sim_df.index),
+                color_continuous_scale="Viridis",
+                aspect="auto",
+                text_auto=".3f"
+            )
+            fig_heatmap.update_layout(
+                height=max(400, len(brand_names) * 35),
+                margin=dict(l=10, r=10, t=30, b=10)
+            )
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+
+            # --- Data Table & CSV Download ---
+            st.markdown("### 📊 Similarity Data")
+
+            display_df = sim_df.reset_index()
+            display_df = display_df.rename(columns={"index": "Brand"})
+
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+            sp_csv_col1, sp_csv_col2 = st.columns([2, 1])
+            with sp_csv_col1:
+                sp_csv_format = st.selectbox(
+                    "CSV Export Format",
+                    ["Standard CSV (, separator, . decimal)", "EU Excel Ready (; separator, , decimal)"],
+                    key="sp_csv_format"
+                )
+            with sp_csv_col2:
+                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+
+                if "EU Excel" in sp_csv_format:
+                    sp_csv_df = display_df.copy()
+                    for col in sp_csv_df.select_dtypes(include=['float64', 'float32']).columns:
+                        sp_csv_df[col] = sp_csv_df[col].apply(lambda x: str(x).replace('.', ','))
+                    sp_csv_bytes = sp_csv_df.to_csv(index=False, sep=';').encode('utf-8')
+                else:
+                    sp_csv_bytes = display_df.to_csv(index=False).encode('utf-8')
+
+                st.download_button(
+                    label="⬇️ Download CSV",
+                    data=sp_csv_bytes,
+                    file_name="Semantic_Positioning_Map.csv",
+                    mime="text/csv",
+                    key="sp_download_csv"
+                )
+
 # --- PAGE: REDDIT ANALYSIS ---
 elif current_page == "Reddit Analysis":
     tab8 = st.tabs(["📢 Reddit Intel"])[0]
@@ -1342,7 +1712,7 @@ elif current_page == "Reddit Analysis":
                              st.session_state['accuranker_data'] = None
                         else:
                             df_sources = pd.DataFrame(sources)
-                            df_sources.insert(0, "Select", False)
+                            df_sources.insert(0, "Select", True)
                             df_sources.rename(columns={"url": "URL", "count": "Prompts", "percentage": "Cited %", "title": "Title"}, inplace=True)
 
                             cols = ["Select", "Title", "URL", "Prompts", "Cited %"]
@@ -1603,6 +1973,40 @@ elif current_page == "Reddit Analysis":
 
                             # Link
                             st.link_button("Open on Reddit", row['Link'])
+
+                # --- General Market Sentiment ---
+                st.markdown("---")
+                st.markdown("#### 🌎 General Market Sentiment")
+                st.info("Synthesize the summarized Reddit threads above into a general market sentiment report using AI.")
+                
+                if st.button("Get Market Sentiment", type="primary", key="btn_market_sentiment"):
+                    with st.spinner("Generating market sentiment report..."):
+                        # Prepare data for LLM
+                        threads_data = df_results.to_dict('records')
+                        
+                        # Use the appropriate client based on whether we have OpenAI client available
+                        # In the current scope, 'client' might be defined from earlier analysis, 
+                        # but to be safe, we init it if needed
+                        gemini_key = st.secrets.get("GEMINI_API_KEY", None)
+                        openai_key = st.secrets.get("OPENAI_API_KEY", None)
+                        
+                        if not openai_key:
+                            st.error("Missing OPENAI_API_KEY in .streamlit/secrets.toml.")
+                        else:
+                            from openai import OpenAI
+                            local_openai_client = OpenAI(api_key=openai_key)
+                            
+                            sentiment_report = backend.generate_general_market_sentiment(
+                                analyzed_threads_data=threads_data,
+                                client=local_openai_client,
+                                model="gpt-4o"
+                            )
+                            
+                            st.session_state['general_market_sentiment'] = sentiment_report
+                
+                if 'general_market_sentiment' in st.session_state:
+                    with st.container(border=True):
+                        st.markdown(st.session_state['general_market_sentiment'])
 
 # --- PAGE: LLM MONITORING ---
 elif current_page == "LLM Monitoring":
