@@ -356,7 +356,27 @@ if fetch_btn:
 
 # --- PAGE: OVERVIEW ---
 if current_page == "Overview":
-    with st.tabs(["📊 Dashboard & Metrics"])[0]:
+    tab_dash, tab_guide = st.tabs(["📊 Dashboard & Metrics", "📖 Features Guide"])
+    
+    with tab_guide:
+        st.markdown("### 📖 Welcome to the Features Guide")
+        st.markdown("This guide explains all the features available in the Saxo GEO Command Center.")
+        try:
+            with open("features_guide.md", "r", encoding="utf-8") as f:
+                content = f.read()
+            sections = content.split("## ")
+            for section in sections[1:]: # Skip empty first part before first ##
+                if "<!-- ADVANCED -->" in section:
+                    standard, advanced = section.split("<!-- ADVANCED -->")
+                    st.markdown("## " + standard.strip())
+                    with st.expander("👩‍💻 Advanced Details (APIs & Methodology)"):
+                        st.markdown(advanced.strip())
+                else:
+                    st.markdown("## " + section.strip())
+        except FileNotFoundError:
+            st.info("Features guide content is currently being written.")
+
+    with tab_dash:
             st.markdown("#### Higher Ground Overview")
             if st.session_state.df_final is not None:
                 df_dash = st.session_state.df_final
@@ -2380,6 +2400,7 @@ elif current_page == "LLM Monitoring":
                 st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
                 comp_latest = st.checkbox("Latest Snapshot Data", value=False, key="comp_ov_latest")
                 show_vector = st.checkbox("Show Competitive Vector", value=False, key="comp_ov_vector")
+                icon_size_val = st.radio("Icon Size", ["Small", "Medium", "Large"], index=1, horizontal=True, key="comp_ov_icon_size")
 
             st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
             fetch_comp_btn = st.button("Generate Overview", type="primary", width="stretch", key="comp_ov_btn")
@@ -2475,6 +2496,12 @@ elif current_page == "LLM Monitoring":
                 
             df_agg['FaviconBase64'] = df_agg['Domain'].apply(get_favicon_b64)
             
+            # Determine icon sizing based on user selection
+            size_map = {"Small": 24, "Medium": 48, "Large": 72}
+            circle_area_map = {"Small": 100, "Medium": 400, "Large": 900}
+            icon_w = size_map.get(st.session_state.get('comp_ov_icon_size', "Medium"), 48)
+            circle_s = circle_area_map.get(st.session_state.get('comp_ov_icon_size', "Medium"), 400)
+            
             scatter_layers = [quad_box]
             
             # --- Competitive Vector Logic ---
@@ -2531,7 +2558,7 @@ elif current_page == "LLM Monitoring":
                         df_vec_no_img = df_vec[df_vec['FaviconBase64'].isnull()]
                         
                         if not df_vec_no_img.empty:
-                            old_circles = alt.Chart(df_vec_no_img).mark_circle(size=80, opacity=0.25).encode(
+                            old_circles = alt.Chart(df_vec_no_img).mark_circle(size=circle_s * 0.8, opacity=0.25).encode(
                                 x=alt.X('Vis_old:Q'),
                                 y=alt.Y('Sen_old:Q'),
                                 color=alt.Color('Competitor:N', legend=None),
@@ -2541,7 +2568,7 @@ elif current_page == "LLM Monitoring":
                         
                         if not df_vec_img.empty:
                             old_images = alt.Chart(df_vec_img).mark_image(
-                                width=24, height=24, opacity=0.25
+                                width=icon_w, height=icon_w, opacity=0.25
                             ).encode(
                                 x=alt.X('Vis_old:Q'),
                                 y=alt.Y('Sen_old:Q'),
@@ -2575,7 +2602,7 @@ elif current_page == "LLM Monitoring":
                 current_tooltip = ['Competitor', 'Domain', 'Visibility', 'Sentiment']
             
             if not df_no_img.empty:
-                points = alt.Chart(df_no_img).mark_circle(size=100, opacity=0.8).encode(
+                points = alt.Chart(df_no_img).mark_circle(size=circle_s, opacity=0.8).encode(
                     x=alt.X('Visibility:Q', title='Visibility (0-100)'),
                     y=alt.Y('Sentiment:Q', title='Sentiment (0-100)'),
                     color=alt.Color('Competitor:N', legend=None),
@@ -2585,7 +2612,7 @@ elif current_page == "LLM Monitoring":
                 
             if not df_with_img.empty:
                 images = alt.Chart(df_with_img).mark_image(
-                    width=24, height=24
+                    width=icon_w, height=icon_w
                 ).encode(
                     x=alt.X('Visibility:Q', title='Visibility (0-100)'),
                     y=alt.Y('Sentiment:Q', title='Sentiment (0-100)'),
@@ -2714,8 +2741,8 @@ elif current_page == "LLM Monitoring":
                 
             with col_date:
                 from datetime import datetime, timedelta
-                ninety_days_ago = datetime.today() - timedelta(days=90)
-                cross_date_range = st.date_input("Date Range", value=(ninety_days_ago, datetime.today()), max_value=datetime.today(), key="cross_date")
+                six_months_ago = datetime.today() - timedelta(days=180)
+                cross_date_range = st.date_input("Date Range", value=(six_months_ago, datetime.today()), max_value=datetime.today(), key="cross_date")
                 
             with col_btn:
                 st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
@@ -3203,8 +3230,8 @@ elif current_page == "LLM Monitoring":
                 
             with col_date:
                 from datetime import datetime, timedelta
-                seven_days_ago = datetime.today() - timedelta(days=7)
-                date_range = st.date_input("Date Range", value=(seven_days_ago, datetime.today()), max_value=datetime.today())
+                six_months_ago = datetime.today() - timedelta(days=180)
+                date_range = st.date_input("Date Range", value=(six_months_ago, datetime.today()), max_value=datetime.today())
                 
         # Filters and Button
         col_filters, col_btn = st.columns([2, 1])
@@ -3395,14 +3422,17 @@ elif current_page == "LLM Monitoring":
                 
             with col_date:
                 from datetime import datetime, timedelta
-                thirty_days_ago = datetime.today() - timedelta(days=30)
-                trends_date_range = st.date_input("Date Range", value=(thirty_days_ago, datetime.today()), max_value=datetime.today(), key="trends_date")
+                six_months_ago = datetime.today() - timedelta(days=180)
+                trends_date_range = st.date_input("Date Range", value=(six_months_ago, datetime.today()), max_value=datetime.today(), key="trends_date")
                 
-        col_btn1, col_btn2 = st.columns([2, 1])
+        col_btn1, col_btn2, col_btn3 = st.columns([1.2, 1.5, 1])
         with col_btn1:
+            rolling_avg_options = ["None", "3-day", "Weekly (7-day)", "Bi-weekly (14-day)", "Monthly (30-day)"]
+            trends_rolling_avg = st.selectbox("Rolling Average", rolling_avg_options, index=2, key="trends_rolling")
+        with col_btn2:
             st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
             breakdown_llm = st.checkbox("Breakdown by LLM (Display data per engine)", value=False, key="trends_breakdown")
-        with col_btn2:
+        with col_btn3:
             st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
             fetch_trends_btn = st.button("Fetch Source Trends", type="primary", width="stretch")
              
@@ -3472,7 +3502,7 @@ elif current_page == "LLM Monitoring":
              all_domains_sorted = sorted(domain_latest_pct.keys(), key=lambda x: domain_latest_pct[x], reverse=True)
              
              st.markdown("### Select Domains to Track")
-             col_dom1, col_dom2, col_dom3 = st.columns([1, 1, 2])
+             col_dom1, col_dom2, col_dom3, col_dom4 = st.columns([1, 1, 1, 2])
              
              with col_dom1:
                  # Standard Reddit checkboxes. Handle comparison naming.
@@ -3484,8 +3514,12 @@ elif current_page == "LLM Monitoring":
                  track_bc = st.checkbox("brokerchooser.com", value=False, disabled=len(bc_names)==0, key="tr_bc")
                  
              with col_dom3:
-                 # Exclude reddit and bc from others
-                 other_domains = [d for d in all_domains_sorted if not (d.startswith("reddit.com") or d.startswith("brokerchooser.com"))]
+                 yt_names = [d for d in all_domains_sorted if d.startswith("youtube.com")]
+                 track_yt = st.checkbox("youtube.com", value=False, disabled=len(yt_names)==0, key="tr_yt")
+                 
+             with col_dom4:
+                 # Exclude reddit, bc, and yt from others
+                 other_domains = [d for d in all_domains_sorted if not (d.startswith("reddit.com") or d.startswith("brokerchooser.com") or d.startswith("youtube.com"))]
                  selected_others = st.multiselect("Other Found Sources (Sorted by latest %)", options=other_domains, default=[], key="tr_others")
                  
              # Combine selected domains
@@ -3494,6 +3528,8 @@ elif current_page == "LLM Monitoring":
                  selected_domains.extend(reddit_names)
              if track_bc:
                  selected_domains.extend(bc_names)
+             if track_yt:
+                 selected_domains.extend(yt_names)
                  
              if not selected_domains:
                  st.info("Please select at least one domain to visualize.")
@@ -3502,41 +3538,77 @@ elif current_page == "LLM Monitoring":
                  plot_df = df_trends[df_trends['Domain'].isin(selected_domains)].copy()
                  
                  if breakdown_llm:
-                     plot_df = plot_df[plot_df['Engine'] != 'Aggregated']
-                     chart = alt.Chart(plot_df).mark_line(point=True, strokeWidth=3).encode(
-                         x=alt.X('Date:T', axis=alt.Axis(title='Date', format='%b %d')),
-                         y=alt.Y('Domain Cited (%):Q', axis=alt.Axis(title='Citations (%)')),
-                         color=alt.Color('Domain:N', legend=alt.Legend(title="Domain", orient="bottom")),
-                         strokeDash=alt.StrokeDash('Engine:N', legend=alt.Legend(title="LLM (Engine)", orient="right")),
-                         tooltip=[
-                             alt.Tooltip('Date:T', format='%Y-%m-%d', title='Date'),
-                             'Domain:N',
-                             'Engine:N',
-                             alt.Tooltip('Domain Cited (%):Q', format='.1f', title='Cited (%)'),
-                             'Domain Prompts:Q',
-                             'Total Prompts:Q'
-                         ]
-                     ).properties(
-                         height=400,
-                         title="Trend of AI Citing Domains by LLM"
-                     ).interactive()
+                     plot_df = plot_df[plot_df['Engine'] != 'Aggregated'].copy()
+                     plot_df['Series'] = plot_df['Domain'] + " [" + plot_df['Engine'] + "]"
+                     
+                     chart_color = alt.Color('Series:N', legend=alt.Legend(title="Domain [LLM]", orient="right"))
+                     chart_title = "Trend of AI Citing Domains by LLM"
+                     chart_tooltips = [
+                         alt.Tooltip('Date:T', format='%Y-%m-%d', title='Date'),
+                         'Domain:N',
+                         'Engine:N',
+                         alt.Tooltip('Domain Cited (%):Q', format='.1f', title='Cited (%)'),
+                         'Domain Prompts:Q',
+                         'Total Prompts:Q'
+                     ]
                  else:
-                     plot_df = plot_df[plot_df['Engine'] == 'Aggregated']
-                     chart = alt.Chart(plot_df).mark_line(point=True, strokeWidth=3).encode(
-                         x=alt.X('Date:T', axis=alt.Axis(title='Date', format='%b %d')),
-                         y=alt.Y('Domain Cited (%):Q', axis=alt.Axis(title='Citations (%)')),
-                         color=alt.Color('Domain:N', legend=alt.Legend(title="Domain", orient="bottom")),
-                         tooltip=[
-                             alt.Tooltip('Date:T', format='%Y-%m-%d', title='Date'),
-                             'Domain:N',
-                             alt.Tooltip('Domain Cited (%):Q', format='.1f', title='Cited (%)'),
-                             'Domain Prompts:Q',
-                             'Total Prompts:Q'
-                         ]
-                     ).properties(
-                         height=400,
-                         title="Trend of AI Citing Domains"
-                     ).interactive()
+                     plot_df = plot_df[plot_df['Engine'] == 'Aggregated'].copy()
+                     plot_df['Series'] = plot_df['Domain']
+                     
+                     chart_color = alt.Color('Domain:N', legend=alt.Legend(title="Domain", orient="bottom"))
+                     chart_title = "Trend of AI Citing Domains"
+                     chart_tooltips = [
+                         alt.Tooltip('Date:T', format='%Y-%m-%d', title='Date'),
+                         'Domain:N',
+                         alt.Tooltip('Domain Cited (%):Q', format='.1f', title='Cited (%)'),
+                         'Domain Prompts:Q',
+                         'Total Prompts:Q'
+                     ]
+
+                 # 2. Apply Rolling Average
+                 period = 1
+                 if trends_rolling_avg == "3-day": period = 3
+                 elif trends_rolling_avg == "Weekly (7-day)": period = 7
+                 elif trends_rolling_avg == "Bi-weekly (14-day)": period = 14
+                 elif trends_rolling_avg == "Monthly (30-day)": period = 30
+                 
+                 if period > 1:
+                     plot_df = plot_df.sort_values(by=['Date'])
+                     plot_df['Domain Cited (%)'] = plot_df.groupby('Series')['Domain Cited (%)'].transform(lambda x: x.rolling(window=period, min_periods=1).mean())
+                 
+                 # 3. Render Scorecards
+                 st.markdown("### Domain Performance Trends")
+                 if period > 1:
+                     st.caption(f"Scorecards display the {trends_rolling_avg.lower()} average, and absolute change from period start.")
+                 else:
+                     st.caption("Scorecards display the absolute change from period start.")
+                     
+                 unique_series = plot_df['Series'].unique()
+                 score_cols = st.columns(min(len(unique_series), 4) if len(unique_series) > 0 else 1)
+                 
+                 for i, series_name in enumerate(unique_series):
+                     s_data = plot_df[plot_df['Series'] == series_name].sort_values('Date')
+                     if not s_data.empty:
+                         start_val = s_data['Domain Cited (%)'].iloc[0]
+                         end_val = s_data['Domain Cited (%)'].iloc[-1]
+                         diff = end_val - start_val
+                         diff_str = f"{diff:+.2f}%"
+                         
+                         with score_cols[i % 4]:
+                             st.metric(label=series_name, value=f"{end_val:.2f}%", delta=diff_str)
+                             
+                 st.markdown("---")
+                     
+                 # 4. Render Chart
+                 chart = alt.Chart(plot_df).mark_line(point=True, strokeWidth=3).encode(
+                     x=alt.X('Date:T', axis=alt.Axis(title='Date', format='%b %d')),
+                     y=alt.Y('Domain Cited (%):Q', axis=alt.Axis(title='Citations (%)')),
+                     color=chart_color,
+                     tooltip=chart_tooltips
+                 ).properties(
+                     height=400,
+                     title=chart_title
+                 ).interactive()
                  
                  st.altair_chart(chart, use_container_width=True)
                  
@@ -3545,7 +3617,6 @@ elif current_page == "LLM Monitoring":
                  # Pivot table for better viewing
                  pivot_base = plot_df.copy()
                  if breakdown_llm:
-                     pivot_base['Series'] = pivot_base['Domain'] + " [" + pivot_base['Engine'] + "]"
                      pivot_col = 'Series'
                  else:
                      pivot_col = 'Domain'
@@ -3632,8 +3703,35 @@ elif current_page == "LLM Monitoring":
                 scrap_tag_clean = scrap_tag_str.split(" (")[0] if " (" in str(scrap_tag_str) else scrap_tag_str
                 
             st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-            fetch_scrap_btn = st.button("Discover Competitors", type="primary", width="stretch", key="scrap_btn")
+            col_btn1, col_btn2 = st.columns([1, 1])
+            with col_btn1:
+                fetch_scrap_btn = st.button("Discover Competitors", type="primary", width="stretch", key="scrap_btn")
+            with col_btn2:
+                view_tracked_btn = st.button("View Tracked Competitors", width="stretch", key="view_tracked_btn")
             
+        if view_tracked_btn:
+            if not accuranker_token:
+                st.error("Missing ACCURANKER_TOKEN in secrets.")
+            else:
+                with st.spinner(f"Fetching tracked competitors for {scrap_brand_name}..."):
+                    tracked_details = backend.fetch_competitor_details(scrap_brand_id, accuranker_token)
+                    
+                    if not tracked_details:
+                        st.warning("No tracked competitors found for this brand.")
+                        st.session_state.scraper_df = None
+                    else:
+                        table_data = []
+                        for t_brand, details in tracked_details.items():
+                            alt_names = ", ".join(details.get("brand_list", []))
+                            table_data.append({
+                                "Status": "Tracked ✅",
+                                "Brand Name": t_brand,
+                                "Website URL": details.get("domain", ""),
+                                "Alternative Names": alt_names
+                            })
+                        st.session_state.scraper_df = pd.DataFrame(table_data)
+                        st.success(f"Found {len(tracked_details)} tracked competitors.")
+
         if fetch_scrap_btn:
             if not accuranker_token:
                 st.error("Missing ACCURANKER_TOKEN in secrets.")
@@ -3664,13 +3762,13 @@ elif current_page == "LLM Monitoring":
                             
                             st.info(f"Analyzing {len(filtered_prompts)} prompts ({responses_found} total responses) to discover new competitors...")
                             
-                            tracked_brands = backend.fetch_competitor_names(scrap_brand_id, accuranker_token)
+                            tracked_details = backend.fetch_competitor_details(scrap_brand_id, accuranker_token)
                             api_keys = {
                                 'google': st.secrets.get("GEMINI_API_KEY"),
                                 'openai': st.secrets.get("OPENAI_API_KEY")
                             }
                             
-                            new_competitors = backend.discover_new_competitors(filtered_prompts, tracked_brands, api_keys)
+                            new_competitors = backend.discover_new_competitors(filtered_prompts, tracked_details, api_keys)
                             
                             if not new_competitors:
                                 st.success("No new untracked competitors were found.")

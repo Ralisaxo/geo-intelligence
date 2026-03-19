@@ -2537,11 +2537,13 @@ Output MUST be valid JSON, starting with {{ and ending with }}. Do not wrap in m
         return []
 
     # Post-process to mark Tracked vs New
-    tracked_lower = [str(b).lower().strip() for b in tracked_brands]
+    # tracked_brands is now a dict: {"Name": {"domain": ..., "brand_list": ...}}
+    tracked_lower_map = {str(k).lower().strip(): v for k, v in tracked_brands.items()}
     
     final_competitors = []
     seen = set()
     
+    # First, add all the ones the AI found
     for comp in raw_competitors:
         name_orig = comp.get("Brand Name", "")
         name = str(name_orig).lower().strip()
@@ -2549,10 +2551,85 @@ Output MUST be valid JSON, starting with {{ and ending with }}. Do not wrap in m
             continue
         seen.add(name)
         
-        if name in tracked_lower:
-            comp["Status"] = "Tracked ✅"
+        if name in tracked_lower_map:
+            comp["Status"] = "Tracked (Mentioned) ✅"
+            # Overwrite with AccuRanker API details to avoid AI hallucinations
+            details = tracked_lower_map[name]
+            if details.get("domain"):
+                comp["Website URL"] = details["domain"]
+            if details.get("brand_list"):
+                comp["Alternative Names"] = ", ".join(details["brand_list"])
         else:
             comp["Status"] = "New ✨"
         final_competitors.append(comp)
+        
+    # Now, add all tracked brands that were NOT mentioned by AI
+    for t_brand, details in tracked_brands.items():
+        t_name_lower = str(t_brand).lower().strip()
+        if t_name_lower and t_name_lower not in seen:
+            seen.add(t_name_lower)
+            alt_names = ", ".join(details.get("brand_list", []))
+            final_competitors.append({
+                "Brand Name": t_brand,
+                "Website URL": details.get("domain", ""),
+                "Alternative Names": alt_names,
+                "Status": "Tracked (Not Mentioned) ➖"
+            })
             
     return final_competitors
+
+def fetch_competitor_details(brand_id, api_token):
+    if not brand_id or not api_token:
+        # Default fallback
+        return {"Saxo Bank": {"domain": "home.saxo", "brand_list": ["Saxo Bank", "Saxo"]}}
+
+    url = f"https://app.accuranker.com/api/v4/brands/{brand_id}/prompts/"
+    headers = {
+        "Authorization": f"Token {api_token}",
+        "Accept": "application/json",
+    }
+    
+    params = {
+        "fields": "results.brands.is_own,results.brands.competitor.display_name,results.brands.competitor.domain,results.brands.competitor.brand_list",
+        "limit": 1000
+    }
+    
+    all_prompts = []
+    
+    try:
+        while url:
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            chunk = data if isinstance(data, list) else data.get('results', [])
+            all_prompts.extend(chunk)
+            
+            url = None if isinstance(data, list) else data.get('next')
+            if url: params = None
+            
+            if len(all_prompts) > 10000:
+                break
+    except Exception as e:
+        print(f"API Error fetching competitor details: {e}")
+        return {"Saxo Bank": {"domain": "home.saxo", "brand_list": ["Saxo Bank", "Saxo"]}}
+
+    competitor_details = {"Saxo Bank": {"domain": "home.saxo", "brand_list": ["Saxo Bank", "Saxo"]}}
+
+    for p in all_prompts:
+        results = p.get('results', [])
+        for r in results:
+            brands = r.get('brands', [])
+            for b in brands:
+                is_own = b.get('is_own')
+                comp = b.get('competitor')
+                
+                if not is_own and comp:
+                    name = comp.get('display_name')
+                    if name and name not in competitor_details:
+                        competitor_details[name] = {
+                            "domain": comp.get('domain', ''),
+                            "brand_list": comp.get('brand_list', [])
+                        }
+    
+    return competitor_details
