@@ -1048,7 +1048,7 @@ def fetch_accuranker_prompts_raw(brand_id, api_token):
     
     # Request fields needed for both tag extraction and processing
     params = {
-        "fields": "id,prompt,tags,results.created_at,results.sources.url,results.sources.title,results.sources.rank",
+        "fields": "id,prompt,tags,results.created_at,results.prompt_response,results.sources.url,results.sources.title,results.sources.rank",
         "limit": 1000
     }
     
@@ -1329,7 +1329,7 @@ def fetch_accuranker_sources(brand_id, tag, start_date, end_date, api_token, cal
         
         # We need created_at to filter dates properly, and engine to count responses per engine
         params = {
-            "fields": "id,prompt,tags,results.created_at,results.engine,results.sources.url",
+            "fields": "id,prompt,tags,results.created_at,results.search_engine,results.sources.url",
             "limit": 1000,
             "period_from": start_date.strftime("%Y-%m-%d") if hasattr(start_date, 'strftime') else start_date,
             "period_to": end_date.strftime("%Y-%m-%d") if hasattr(end_date, 'strftime') else end_date
@@ -1462,6 +1462,153 @@ def fetch_accuranker_sources(brand_id, tag, start_date, end_date, api_token, cal
     df = pd.DataFrame(output_data)
     if not df.empty:
         df = df.sort_values(by=["Domain Cited (%)", "URL Cited (%)"], ascending=[False, False]).reset_index(drop=True)
+    return df
+
+def fetch_source_trends(brand_id, tag, start_date, end_date, api_token):
+    """
+    Fetches all prompts for a given date range and extracts all cited source domains over time.
+    Aggregates them by Date and Domain and calculates percentages based on total prompts for that day.
+    """
+    if not brand_id or not api_token or not start_date or not end_date:
+        return pd.DataFrame()
+
+    brand_ids = brand_id if isinstance(brand_id, list) else [brand_id]
+    all_prompts = []
+
+    for b_id in brand_ids:
+        url = f"https://app.accuranker.com/api/v4/brands/{b_id}/prompts/"
+        headers = {
+            "Authorization": f"Token {api_token}",
+            "Accept": "application/json",
+        }
+        
+        params = {
+            "fields": "id,prompt,tags,results.created_at,results.search_engine,results.sources.url",
+            "limit": 1000,
+            "period_from": start_date.strftime("%Y-%m-%d") if hasattr(start_date, 'strftime') else start_date,
+            "period_to": end_date.strftime("%Y-%m-%d") if hasattr(end_date, 'strftime') else end_date
+        }
+        
+        try:
+            while url:
+                response = requests.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                data = response.json()
+                
+                chunk = []
+                if isinstance(data, list):
+                    chunk = data
+                    url = None
+                elif isinstance(data, dict):
+                    chunk = data.get('results', [])
+                    url = data.get('next')
+                    if url: params = None
+                
+                all_prompts.extend(chunk)
+                
+                if len(all_prompts) > 10000: # Safety
+                    break
+
+        except Exception as e:
+            print(f"API Error fetching source trends for brand {b_id}: {e}")
+            continue
+
+    if not all_prompts:
+        return pd.DataFrame()
+
+    tag_lower = tag.lower() if tag else None
+    
+    daily_total_prompts = {} # engine -> date -> count of prompts evaluated on that date
+    daily_domain_counts = {} # engine -> date -> {domain -> count of prompts citing domain on that date}
+    
+    for p in all_prompts:
+        p_tags = [t.lower() for t in (p.get('tags') or [])]
+        if tag_lower and tag_lower not in p_tags:
+            continue
+            
+        # Group results by date
+        results = p.get('results', [])
+        results_by_date = {}
+        for r in results:
+            date_str = r.get('created_at', '')[:10]
+            if date_str:
+                if date_str not in results_by_date:
+                    results_by_date[date_str] = []
+                results_by_date[date_str].append(r)
+                
+        # For each date this prompt has results
+        for current_date, date_results in results_by_date.items():
+            # 1. Aggregated Level
+            daily_total_prompts.setdefault("Aggregated", {}).setdefault(current_date, 0)
+            daily_total_prompts["Aggregated"][current_date] += 1
+            
+            # 2. Engine Level (Find unique engines for this prompt on this date)
+            engines_for_prompt = set()
+            for r in date_results:
+                eng = r.get('search_engine') or r.get('engine', 'Unknown')
+                engines_for_prompt.add(eng)
+                
+            for eng in engines_for_prompt:
+                daily_total_prompts.setdefault(eng, {}).setdefault(current_date, 0)
+                daily_total_prompts[eng][current_date] += 1
+                
+            # Now domains
+            unique_domains_agg = set()
+            unique_domains_eng = {} # eng -> set of domains
+            
+            for r in date_results:
+                eng = r.get('search_engine') or r.get('engine', 'Unknown')
+                if eng not in unique_domains_eng:
+                    unique_domains_eng[eng] = set()
+                    
+                sources = r.get('sources', [])
+                for s in sources:
+                    s_url = s.get('url')
+                    if s_url:
+                        try:
+                            parsed = urllib.parse.urlparse(s_url)
+                            domain = parsed.netloc
+                            if domain.startswith("www."):
+                                domain = domain[4:]
+                            unique_domains_agg.add(domain)
+                            unique_domains_eng[eng].add(domain)
+                        except Exception:
+                            pass
+                            
+            # Save counts
+            daily_domain_counts.setdefault("Aggregated", {}).setdefault(current_date, {})
+            for d in unique_domains_agg:
+                daily_domain_counts["Aggregated"][current_date][d] = daily_domain_counts["Aggregated"][current_date].get(d, 0) + 1
+                
+            for eng, doms in unique_domains_eng.items():
+                daily_domain_counts.setdefault(eng, {}).setdefault(current_date, {})
+                for d in doms:
+                    daily_domain_counts[eng][current_date][d] = daily_domain_counts[eng][current_date].get(d, 0) + 1
+
+    # Format output
+    output_data = []
+    
+    for engine, engine_dates in daily_domain_counts.items():
+        for date_str, domains in engine_dates.items():
+            total_prompts_on_date = daily_total_prompts.get(engine, {}).get(date_str, 0)
+            
+            for domain, count in domains.items():
+                pct = (count / total_prompts_on_date * 100) if total_prompts_on_date > 0 else 0
+                
+                output_data.append({
+                    "Engine": engine,
+                    "Date": date_str,
+                    "Domain": domain,
+                    "Domain Prompts": count,
+                    "Total Prompts": total_prompts_on_date,
+                    "Domain Cited (%)": pct
+                })
+
+    df = pd.DataFrame(output_data)
+    if not df.empty:
+        # Convert Date to datetime for proper sorting but keep as string if we want it to be compatible with Altair date stuff out of the box, or Altair handles datetime
+        # Let's keep Date as strings (YYYY-MM-DD), Altair parses them nicely as 'Date:T'. Time-series chart works best when we use Date objects or strings that Altair maps directly.
+        df = df.sort_values(by=["Date", "Domain Cited (%)"], ascending=[True, False]).reset_index(drop=True)
     return df
 
 
@@ -2338,3 +2485,74 @@ def compute_quadrant_coordinates(brand_embeddings, anchor_embeddings, brand_name
     })
     
     return df
+
+def discover_new_competitors(prompts_list, tracked_brands, api_keys):
+    gemini_key = api_keys.get('google')
+    openai_key = api_keys.get('openai')
+    
+    combined_text = ""
+    for p in prompts_list:
+        results = p.get('results', [])
+        for r in results:
+            response = r.get('prompt_response')
+            if response:
+                combined_text += response + "\n"
+                
+    if len(combined_text) > 40000:
+        combined_text = combined_text[:40000]
+                
+    if not combined_text.strip():
+        return []
+        
+    system_instruction = f"""You are a competitive intelligence analyst. Extract ALL competitor brand names mentioned in the following text (which contains AI search engine responses).
+Include both already known brands and potential new ones.
+Return EXACTLY a JSON object with a single key "competitors", which contains an array of objects with these keys:
+- "Brand Name": The name of the competitor.
+- "Website URL": Their official website URL (clean format without https://, www., or trailing slash. e.g., 'example.com'). Use your internal knowledge or web search to find the correct URL.
+- "Alternative Names": Comma-separated alternative names or tickers for the brand (e.g., 'IBKR'). If none, use an empty string.
+
+Output MUST be valid JSON, starting with {{ and ending with }}. Do not wrap in markdown or anything else."""
+    
+    raw_competitors = []
+
+    if openai_key:
+        try:
+            from openai import OpenAI
+            client = OpenAI(api_key=openai_key)
+            completion = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": system_instruction},
+                    {"role": "user", "content": combined_text}
+                ],
+                response_format={"type": "json_object"}
+            )
+            content = completion.choices[0].message.content
+            data = json.loads(content)
+            raw_competitors = data.get("competitors", [])
+        except Exception as e:
+            print(f"OpenAI failed for Competitor Scraper: {e}")
+            
+    if not raw_competitors:
+        return []
+
+    # Post-process to mark Tracked vs New
+    tracked_lower = [str(b).lower().strip() for b in tracked_brands]
+    
+    final_competitors = []
+    seen = set()
+    
+    for comp in raw_competitors:
+        name_orig = comp.get("Brand Name", "")
+        name = str(name_orig).lower().strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        
+        if name in tracked_lower:
+            comp["Status"] = "Tracked ✅"
+        else:
+            comp["Status"] = "New ✨"
+        final_competitors.append(comp)
+            
+    return final_competitors

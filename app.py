@@ -2028,7 +2028,7 @@ elif current_page == "LLM Monitoring":
         "Saxo UK": 10000079
     }
 
-    tab_kpi, tab_comp_overview, tab_cross_market, tab_truth, tab_extract = st.tabs(["📈 KPI Monitoring", "🏎️ Competitive Overview", "🌍 Cross Market Analysis", "🛡️ LLM Truth Control", "⛏️ Source Extraction"])
+    tab_kpi, tab_comp_overview, tab_cross_market, tab_truth, tab_extract, tab_source_trends, tab_scraper = st.tabs(["📈 KPI Monitoring", "🏎️ Competitive Overview", "🌍 Cross Market Analysis", "🛡️ LLM Truth Control", "⛏️ Source Extraction", "📈 Source Trends", "🕵️‍♂️ Competitor Scraper"])
 
     with tab_kpi:
         st.markdown("## 📈 KPI Monitoring")
@@ -3270,14 +3270,14 @@ elif current_page == "LLM Monitoring":
                          # Recalculate percentages after filtering? 
                          # Usually percentages should be of the *total* prompts, so we might want to keep the original Cited percentage even if we filter.
                          # Based on user description, filtering out results means they just don't show up in the table.
-                         
                          st.session_state.source_extraction_df = df_sources
-                         st.success(f"Extracted {len(df_sources)} unique sources.")
 
         # Display Results
         if 'source_extraction_df' in st.session_state and st.session_state.source_extraction_df is not None:
              df_disp = st.session_state.source_extraction_df
              
+             unique_domains = df_disp['Domain'].nunique()
+             st.success(f"Extracted {unique_domains} unique domains and {len(df_disp)} unique URLs.")
              st.markdown("### Latest Extracted Sources")
              
              # Bar Chart visualization
@@ -3347,6 +3347,378 @@ elif current_page == "LLM Monitoring":
                  width="stretch",
                  height=600
              )
+
+    with tab_source_trends:
+        st.markdown("## 📈 Source Trends")
+        st.info("Track the historical usage of specific domains cited by AI engines over time.")
+        
+        with st.container(border=True):
+            col_brand, col_comp, col_tag, col_date = st.columns([1, 1, 1, 1])
+            with col_brand:
+                brand_options_trends = ["All Brands (Excl. GEO/Inst)"] + list(ACCURANKER_BRANDS.keys())
+                trends_brand_name = st.selectbox("Select Brand", brand_options_trends, index=1, key="trends_brand")
+                if trends_brand_name == "All Brands (Excl. GEO/Inst)":
+                    trends_brand_id = [v for k, v in ACCURANKER_BRANDS.items() if k not in ["GEO Experiments", "Saxo Institutional"]]
+                    # Use Saxo DK for tag fetching as a fallback
+                    tag_brand_id_trends = ACCURANKER_BRANDS.get("Saxo DK", 10000087)
+                else:
+                    trends_brand_id = ACCURANKER_BRANDS[trends_brand_name]
+                    tag_brand_id_trends = trends_brand_id
+                    
+            with col_comp:
+                comp_options_trends = ["None"] + list(ACCURANKER_BRANDS.keys())
+                trends_comp_name = st.selectbox("Compare With (Optional)", comp_options_trends, key="trends_comp_brand")
+                trends_comp_id = ACCURANKER_BRANDS.get(trends_comp_name)
+                    
+            with col_tag:
+                accuranker_token = st.secrets.get("ACCURANKER_TOKEN")
+                trends_cache_key = f"tags_{tag_brand_id_trends}"
+                
+                if trends_cache_key not in st.session_state:
+                     with st.spinner("Loading Tags..."):
+                          if accuranker_token:
+                              st.session_state[trends_cache_key] = backend.fetch_unique_tags(tag_brand_id_trends, accuranker_token)
+                          else:
+                              st.session_state[trends_cache_key] = {}
+                
+                tags_map = st.session_state.get(trends_cache_key, {})
+                tag_options = [f"{t} ({c})" for t, c in tags_map.items()]
+                
+                default_ix = 0
+                for i, opt in enumerate(tag_options):
+                    if "Commercial" in opt:
+                        default_ix = i
+                        break
+                    
+                trends_tag_str = st.selectbox("Tag Filter", tag_options, index=default_ix, key="trends_tag") if tag_options else st.text_input("Tag Filter (No tags found)", value="Commercial", key="trends_tag_fallback")
+                trends_tag_clean = trends_tag_str.split(" (")[0] if " (" in str(trends_tag_str) else trends_tag_str
+                
+            with col_date:
+                from datetime import datetime, timedelta
+                thirty_days_ago = datetime.today() - timedelta(days=30)
+                trends_date_range = st.date_input("Date Range", value=(thirty_days_ago, datetime.today()), max_value=datetime.today(), key="trends_date")
+                
+        col_btn1, col_btn2 = st.columns([2, 1])
+        with col_btn1:
+            st.markdown("<div style='height: 38px;'></div>", unsafe_allow_html=True)
+            breakdown_llm = st.checkbox("Breakdown by LLM (Display data per engine)", value=False, key="trends_breakdown")
+        with col_btn2:
+            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+            fetch_trends_btn = st.button("Fetch Source Trends", type="primary", width="stretch")
+             
+        if fetch_trends_btn:
+             if len(trends_date_range) != 2:
+                 st.error("Please select both a start and end date.")
+             elif not accuranker_token:
+                 st.error("Missing ACCURANKER_TOKEN in secrets.")
+             elif trends_comp_id and trends_brand_id == trends_comp_id:
+                 st.warning("Cannot compare a brand to itself.")
+             else:
+                 start_date, end_date = trends_date_range
+                 with st.spinner(f"Fetching source trends..."):
+                     df_primary = backend.fetch_source_trends(
+                         trends_brand_id,
+                         trends_tag_clean,
+                         start_date,
+                         end_date,
+                         accuranker_token
+                     )
+                     
+                     if not df_primary.empty:
+                         if trends_comp_id:
+                             df_primary['Domain'] = df_primary['Domain'] + f" ({trends_brand_name})"
+                             
+                         df_final = df_primary
+                         
+                         if trends_comp_id:
+                             df_comp = backend.fetch_source_trends(
+                                 trends_comp_id,
+                                 trends_tag_clean,
+                                 start_date,
+                                 end_date,
+                                 accuranker_token
+                             )
+                             if not df_comp.empty:
+                                 df_comp['Domain'] = df_comp['Domain'] + f" ({trends_comp_name})"
+                                 df_final = pd.concat([df_primary, df_comp], ignore_index=True)
+                                 
+                         st.session_state.source_trends_df = df_final
+                         st.success(f"Successfully fetched trend data for {len(df_final['Domain'].unique())} unique domains.")
+                     else:
+                         st.warning("No trend data found for the selected criteria.")
+                         st.session_state.source_trends_df = None
+                         
+        if 'source_trends_df' in st.session_state and st.session_state.source_trends_df is not None:
+             df_trends = st.session_state.source_trends_df.copy()
+             
+             # Extract unique domains and find latest usage for sorting (Aggregated only)
+             agg_df = df_trends[df_trends['Engine'] == 'Aggregated']
+             if agg_df.empty:
+                 agg_df = df_trends # fallback
+                 
+             latest_date = agg_df['Date'].max()
+             latest_df = agg_df[agg_df['Date'] == latest_date]
+             
+             # Create a dictionary of domains -> latest %
+             domain_latest_pct = {}
+             for d in agg_df['Domain'].unique():
+                 match = latest_df[latest_df['Domain'] == d]
+                 if not match.empty:
+                     domain_latest_pct[d] = match['Domain Cited (%)'].values[0]
+                 else:
+                     domain_latest_pct[d] = 0.0
+                     
+             # Sort domains based on latest pct (descending)
+             all_domains_sorted = sorted(domain_latest_pct.keys(), key=lambda x: domain_latest_pct[x], reverse=True)
+             
+             st.markdown("### Select Domains to Track")
+             col_dom1, col_dom2, col_dom3 = st.columns([1, 1, 2])
+             
+             with col_dom1:
+                 # Standard Reddit checkboxes. Handle comparison naming.
+                 reddit_names = [d for d in all_domains_sorted if d.startswith("reddit.com")]
+                 track_reddit = st.checkbox("reddit.com", value=len(reddit_names)>0, disabled=len(reddit_names)==0, key="tr_reddit")
+             
+             with col_dom2:
+                 bc_names = [d for d in all_domains_sorted if d.startswith("brokerchooser.com")]
+                 track_bc = st.checkbox("brokerchooser.com", value=False, disabled=len(bc_names)==0, key="tr_bc")
+                 
+             with col_dom3:
+                 # Exclude reddit and bc from others
+                 other_domains = [d for d in all_domains_sorted if not (d.startswith("reddit.com") or d.startswith("brokerchooser.com"))]
+                 selected_others = st.multiselect("Other Found Sources (Sorted by latest %)", options=other_domains, default=[], key="tr_others")
+                 
+             # Combine selected domains
+             selected_domains = selected_others.copy()
+             if track_reddit:
+                 selected_domains.extend(reddit_names)
+             if track_bc:
+                 selected_domains.extend(bc_names)
+                 
+             if not selected_domains:
+                 st.info("Please select at least one domain to visualize.")
+             else:
+                 # Filter Dataframe for plot
+                 plot_df = df_trends[df_trends['Domain'].isin(selected_domains)].copy()
+                 
+                 if breakdown_llm:
+                     plot_df = plot_df[plot_df['Engine'] != 'Aggregated']
+                     chart = alt.Chart(plot_df).mark_line(point=True, strokeWidth=3).encode(
+                         x=alt.X('Date:T', axis=alt.Axis(title='Date', format='%b %d')),
+                         y=alt.Y('Domain Cited (%):Q', axis=alt.Axis(title='Citations (%)')),
+                         color=alt.Color('Domain:N', legend=alt.Legend(title="Domain", orient="bottom")),
+                         strokeDash=alt.StrokeDash('Engine:N', legend=alt.Legend(title="LLM (Engine)", orient="right")),
+                         tooltip=[
+                             alt.Tooltip('Date:T', format='%Y-%m-%d', title='Date'),
+                             'Domain:N',
+                             'Engine:N',
+                             alt.Tooltip('Domain Cited (%):Q', format='.1f', title='Cited (%)'),
+                             'Domain Prompts:Q',
+                             'Total Prompts:Q'
+                         ]
+                     ).properties(
+                         height=400,
+                         title="Trend of AI Citing Domains by LLM"
+                     ).interactive()
+                 else:
+                     plot_df = plot_df[plot_df['Engine'] == 'Aggregated']
+                     chart = alt.Chart(plot_df).mark_line(point=True, strokeWidth=3).encode(
+                         x=alt.X('Date:T', axis=alt.Axis(title='Date', format='%b %d')),
+                         y=alt.Y('Domain Cited (%):Q', axis=alt.Axis(title='Citations (%)')),
+                         color=alt.Color('Domain:N', legend=alt.Legend(title="Domain", orient="bottom")),
+                         tooltip=[
+                             alt.Tooltip('Date:T', format='%Y-%m-%d', title='Date'),
+                             'Domain:N',
+                             alt.Tooltip('Domain Cited (%):Q', format='.1f', title='Cited (%)'),
+                             'Domain Prompts:Q',
+                             'Total Prompts:Q'
+                         ]
+                     ).properties(
+                         height=400,
+                         title="Trend of AI Citing Domains"
+                     ).interactive()
+                 
+                 st.altair_chart(chart, use_container_width=True)
+                 
+                 # Display Data Table
+                 st.markdown("### Data Details")
+                 # Pivot table for better viewing
+                 pivot_base = plot_df.copy()
+                 if breakdown_llm:
+                     pivot_base['Series'] = pivot_base['Domain'] + " [" + pivot_base['Engine'] + "]"
+                     pivot_col = 'Series'
+                 else:
+                     pivot_col = 'Domain'
+                     
+                 # Important: if multiple rows map to the same date and series, we should aggregate or guarantee uniqueness
+                 # They should be unique, but let's be safe.
+                 pivot_df = pivot_base.pivot_table(index='Date', columns=pivot_col, values='Domain Cited (%)', aggfunc='mean').reset_index()
+                 
+                 # Ensure Date is a string for display
+                 if pd.api.types.is_datetime64_any_dtype(pivot_df['Date']):
+                     pivot_df['Date'] = pivot_df['Date'].dt.strftime('%Y-%m-%d')
+                 else:
+                     pivot_df['Date'] = pivot_df['Date'].astype(str)
+                 pivot_df = pivot_df.fillna(0) # Fill missing dates/domains with 0
+                 
+                 # Format percentages
+                 for col in pivot_df.columns:
+                     if col != 'Date':
+                         pivot_df[col] = pivot_df[col].map(lambda x: f"{x:.2f}%")
+                         
+                 st.dataframe(pivot_df, use_container_width=True, hide_index=True)
+                 
+                 # Raw Data underneath for exact numbers
+                 with st.expander("View Raw Export Data", expanded=False):
+                     st.dataframe(plot_df, use_container_width=True, hide_index=True)
+                 
+                 # Export buttons
+                 export_col1, export_col2 = st.columns([2, 1])
+                 with export_col1:
+                     csv_standard = plot_df.to_csv(index=False).encode('utf-8')
+                     csv_eu = plot_df.to_csv(index=False, sep=';', decimal=',').encode('utf-8-sig')
+                     
+                     sub_c1, sub_c2 = st.columns(2)
+                     with sub_c1:
+                         st.download_button(
+                             label="📥 Download Standard CSV",
+                             data=csv_standard,
+                             file_name=f"source_trends_{trends_brand_name.replace(' ', '_')}.csv",
+                             mime="text/csv",
+                             use_container_width=True,
+                             key="dl_trends_std"
+                         )
+                     with sub_c2:
+                         st.download_button(
+                             label="📥 Download EU CSV (; delimited)",
+                             data=csv_eu,
+                             file_name=f"source_trends_eu_{trends_brand_name.replace(' ', '_')}.csv",
+                             mime="text/csv",
+                             use_container_width=True,
+                             key="dl_trends_eu"
+                         )
+
+    with tab_scraper:
+        st.markdown("## 🕵️‍♂️ Competitor Scraper")
+        st.info("Find unnamed or untracked competitor brands in AI search responses.")
+        
+        with st.container(border=True):
+            col_brand, col_tag = st.columns([1, 1])
+            with col_brand:
+                scrap_brand_name = st.selectbox("Select Market (Brand)", list(ACCURANKER_BRANDS.keys()), key="scrap_brand")
+                scrap_brand_id = ACCURANKER_BRANDS[scrap_brand_name]
+                
+            with col_tag:
+                accuranker_token = st.secrets.get("ACCURANKER_TOKEN")
+                scrap_cache_key = f"tags_{scrap_brand_id}"
+                
+                if scrap_cache_key not in st.session_state:
+                     with st.spinner("Loading Tags..."):
+                          if accuranker_token:
+                              st.session_state[scrap_cache_key] = backend.fetch_unique_tags(scrap_brand_id, accuranker_token)
+                          else:
+                              st.session_state[scrap_cache_key] = {}
+                
+                tags_map = st.session_state.get(scrap_cache_key, {})
+                tag_options = [f"{t} ({c})" for t, c in tags_map.items()]
+                
+                default_ix = 0
+                for i, opt in enumerate(tag_options):
+                    if "Commercial" in opt:
+                        default_ix = i
+                        break
+                    
+                scrap_tag_str = st.selectbox("Tag Filter", tag_options, index=default_ix, key="scrap_tag") if tag_options else st.text_input("Tag Filter (No tags found)", value="Commercial", key="scrap_tag_fallback")
+                scrap_tag_clean = scrap_tag_str.split(" (")[0] if " (" in str(scrap_tag_str) else scrap_tag_str
+                
+            st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+            fetch_scrap_btn = st.button("Discover Competitors", type="primary", width="stretch", key="scrap_btn")
+            
+        if fetch_scrap_btn:
+            if not accuranker_token:
+                st.error("Missing ACCURANKER_TOKEN in secrets.")
+            else:
+                with st.spinner(f"Fetching prompts for {scrap_brand_name}..."):
+                    raw_prompts = backend.fetch_accuranker_prompts_raw(scrap_brand_id, accuranker_token)
+                    
+                    if not raw_prompts:
+                        st.warning("No prompts found for this brand.")
+                    else:
+                        # Filter by tag
+                        tag_lower = scrap_tag_clean.lower()
+                        filtered_prompts = []
+                        for p in raw_prompts:
+                            p_tags = [t.lower() for t in (p.get('tags') or [])]
+                            if tag_lower in p_tags:
+                                filtered_prompts.append(p)
+                                
+                        if not filtered_prompts:
+                            st.warning(f"No prompts found with tag: {scrap_tag_clean}")
+                        else:
+                            # Debug info
+                            responses_found = 0
+                            for p in filtered_prompts:
+                                for r in p.get('results', []):
+                                    if r.get('prompt_response'):
+                                        responses_found += 1
+                            
+                            st.info(f"Analyzing {len(filtered_prompts)} prompts ({responses_found} total responses) to discover new competitors...")
+                            
+                            tracked_brands = backend.fetch_competitor_names(scrap_brand_id, accuranker_token)
+                            api_keys = {
+                                'google': st.secrets.get("GEMINI_API_KEY"),
+                                'openai': st.secrets.get("OPENAI_API_KEY")
+                            }
+                            
+                            new_competitors = backend.discover_new_competitors(filtered_prompts, tracked_brands, api_keys)
+                            
+                            if not new_competitors:
+                                st.success("No new untracked competitors were found.")
+                                st.session_state.scraper_df = None
+                            else:
+                                st.session_state.scraper_df = pd.DataFrame(new_competitors)
+                                st.success(f"Discovered {len(new_competitors)} potential new competitors!")
+                                
+        if 'scraper_df' in st.session_state and st.session_state.scraper_df is not None:
+            df_scrap = st.session_state.scraper_df
+            
+            st.markdown("### Discovered Competitors")
+            st.dataframe(
+                df_scrap,
+                column_config={
+                    "Status": st.column_config.TextColumn("Status", width="small"),
+                    "Brand Name": st.column_config.TextColumn("Competitor Brand Name"),
+                    "Website URL": st.column_config.LinkColumn("Website URL"),
+                    "Alternative Names": st.column_config.TextColumn("Alternative Spelling Versions")
+                },
+                hide_index=True,
+                width="stretch"
+            )
+            
+            # CSV Download Options
+            col_csv1, col_csv2 = st.columns([2, 1])
+            with col_csv1:
+                csv_format = st.selectbox(
+                    "CSV Export Format", 
+                    ["Standard CSV (, separator, . decimal)", "EU Excel Ready (; separator, , decimal)"], 
+                    key="csv_format_scraper"
+                )
+            with col_csv2:
+                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                
+                if "EU Excel" in csv_format:
+                    df_csv = df_scrap.copy()
+                    csv_bytes = df_csv.to_csv(index=False, sep=';').encode('utf-8')
+                else:
+                    csv_bytes = df_scrap.to_csv(index=False).encode('utf-8')
+                    
+                st.download_button(
+                    label="⬇️ Download Discovered Competitors",
+                    data=csv_bytes,
+                    file_name=f"Discovered_Competitors_{scrap_brand_name.replace(' ', '_')}.csv",
+                    mime="text/csv",
+                    key="scraper_download"
+                )
 
 # --- PAGE: AI POWERED TOOLS ---
 elif current_page == "AI Powered Tools":
