@@ -2837,7 +2837,9 @@ elif current_page == "LLM Monitoring":
         with st.container(border=True):
             c1, c2 = st.columns([1, 1])
             with c1:
-                selected_brand_name = st.selectbox("Select Brand", list(ACCURANKER_BRANDS.keys()))
+                brand_list = list(ACCURANKER_BRANDS.keys())
+                truth_default_idx = brand_list.index("Saxo BE") if "Saxo BE" in brand_list else 0
+                selected_brand_name = st.selectbox("Select Brand", brand_list, index=truth_default_idx)
                 selected_brand_id = ACCURANKER_BRANDS[selected_brand_name]
             with c2:
                 # Tag Logic: Fetch on change or if missing
@@ -2862,7 +2864,7 @@ elif current_page == "LLM Monitoring":
                 # Find default index
                 default_ix = 0
                 for i, opt in enumerate(tag_options):
-                    if "Commercial" in opt:
+                    if "Truth" in opt:
                         default_ix = i
                         break
                 
@@ -3197,7 +3199,8 @@ elif current_page == "LLM Monitoring":
             col_brand, col_tag, col_date = st.columns([1, 1, 1])
             with col_brand:
                 brand_options = ["All Brands (Excl. GEO/Inst)"] + list(ACCURANKER_BRANDS.keys())
-                ext_brand_name = st.selectbox("Select Brand", brand_options, index=1, key="ext_brand")
+                ext_default_idx = brand_options.index("Saxo BE") if "Saxo BE" in brand_options else 1
+                ext_brand_name = st.selectbox("Select Brand", brand_options, index=ext_default_idx, key="ext_brand")
                 if ext_brand_name == "All Brands (Excl. GEO/Inst)":
                     ext_brand_id = [v for k, v in ACCURANKER_BRANDS.items() if k not in ["GEO Experiments", "Saxo Institutional"]]
                     tag_brand_id = ACCURANKER_BRANDS.get("Saxo DK", 10000087)
@@ -3375,6 +3378,416 @@ elif current_page == "LLM Monitoring":
                  height=600
              )
 
+             # -----------------------------------------------------------------
+             # BRAND MENTION VERIFICATION
+             # -----------------------------------------------------------------
+             st.markdown("---")
+             st.subheader("🔍 Brand Mention Verification")
+             st.info("Use DataForSEO's Content Parsing API to check if the top cited URLs actually mention your brand. Note: YouTube URLs are automatically skipped and marked as failed as they natively block parsing.")
+
+             with st.container(border=True):
+                 col_slider, col_brand = st.columns([1, 1])
+                 with col_slider:
+                     verify_batch_size = st.slider(
+                         "Number of URLs to check (Batch Size)",
+                         min_value=100,
+                         max_value=1000,
+                         step=100,
+                         value=100,
+                         key="verify_batch_size"
+                     )
+                     cost = verify_batch_size / 100 * 0.0125
+                     st.markdown(f"Checking the top **{verify_batch_size}** URLs will cost exactly **\\${cost:.4f}** *(DataForSEO pricing: \\$0.0125 per 100 URLs)*.")
+
+                 with col_brand:
+                     verify_brand_name = st.text_input(
+                         "Brand name to search for",
+                         value="Saxo",
+                         key="verify_brand_name",
+                         help="The brand name to look for in the parsed page content (case-insensitive)."
+                     )
+
+                 col_check, col_btn = st.columns([1, 1])
+                 with col_check:
+                     include_unchecked = st.checkbox("Include 'Unchecked' URLs in charts", value=False, key="include_unchecked")
+                     exclude_failed = st.checkbox("Exclude 'Crawl Failed' URLs from charts", value=False, key="exclude_failed")
+                 with col_btn:
+                     st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+                     verify_btn = st.button("🔍 Verify Top Sources via DataForSEO", type="primary", width="stretch")
+
+                 retry_btn = False
+                 failed_urls = []
+                 if "Mentions Brand" in df_disp.columns:
+                     failed_urls = df_disp[df_disp["Mentions Brand"] == "⚠️ Crawl Failed"]["Full URL"].tolist()
+                     if failed_urls:
+                         retry_btn = st.button(f"🔄 Retry {len(failed_urls)} Failed URLs", type="secondary", width="stretch")
+
+             if verify_btn or retry_btn:
+                 dataforseo_login = st.secrets.get("DATAFORSEO_LOGIN")
+                 dataforseo_password = st.secrets.get("DATAFORSEO_PASSWORD")
+
+                 if not dataforseo_login or not dataforseo_password:
+                     st.error("Missing DATAFORSEO_LOGIN or DATAFORSEO_PASSWORD in secrets.")
+                 elif not verify_brand_name.strip():
+                     st.error("Please enter a brand name to search for.")
+                 else:
+                     if retry_btn:
+                         df_sorted = df_disp.copy()
+                         urls_to_check = failed_urls
+                         top_n = len(urls_to_check)
+                     else:
+                         df_sorted = df_disp.sort_values(by="URL Cited (%)", ascending=False).reset_index(drop=True)
+                         top_n = min(verify_batch_size, len(df_sorted))
+                         urls_to_check = df_sorted["Full URL"].head(top_n).tolist()
+
+                     # --- YouTube Filtering ---
+                     youtube_urls = [u for u in urls_to_check if "youtube.com" in u.lower() or "youtu.be" in u.lower()]
+                     api_urls = [u for u in urls_to_check if u not in youtube_urls]
+
+                     progress_bar = st.progress(0, text="Starting brand verification...")
+
+                     def update_progress(current, total):
+                         pct = current / total if total > 0 else 1.0
+                         progress_bar.progress(pct, text=f"Checking URLs... {current}/{total}")
+
+                     with st.spinner(f"Verifying {len(api_urls)} URLs via DataForSEO (Skipped {len(youtube_urls)} YouTube URLs)..."):
+                         tracked_details = backend.fetch_competitor_details(ext_brand_id, accuranker_token)
+                         
+                         verification_results = backend.verify_urls_with_dataforseo(
+                             api_urls,
+                             verify_brand_name.strip(),
+                             dataforseo_login,
+                             dataforseo_password,
+                             progress_callback=update_progress,
+                             tracked_details=tracked_details
+                         )
+                         
+                     # Automatically fail youtube urls without pinging API
+                     for y_url in youtube_urls:
+                         verification_results[y_url] = {
+                             "Mentions Brand": "⚠️ Crawl Failed",
+                             "Mentioned Competitors": "",
+                             "Competitor Count": 0
+                         }
+
+                     progress_bar.progress(1.0, text="Verification complete!")
+
+                     if retry_btn:
+                         for u, status_dict in verification_results.items():
+                             # Overwrite previous failed statuses with the new status
+                             df_sorted.loc[df_sorted["Full URL"] == u, "Mentions Brand"] = status_dict["Mentions Brand"]
+                             df_sorted.loc[df_sorted["Full URL"] == u, "Mentioned Competitors"] = status_dict["Mentioned Competitors"]
+                             df_sorted.loc[df_sorted["Full URL"] == u, "Competitor Count"] = status_dict["Competitor Count"]
+                     else:
+                         df_sorted["Mentions Brand"] = df_sorted["Full URL"].apply(
+                             lambda u: verification_results.get(u, {}).get("Mentions Brand", "⏳ Unchecked")
+                         )
+                         df_sorted["Mentioned Competitors"] = df_sorted["Full URL"].apply(
+                             lambda u: verification_results.get(u, {}).get("Mentioned Competitors", "")
+                         )
+                         df_sorted["Competitor Count"] = df_sorted["Full URL"].apply(
+                             lambda u: verification_results.get(u, {}).get("Competitor Count", 0)
+                         )
+
+                     st.session_state.source_extraction_df = df_sorted
+                     
+                     if retry_btn:
+                         st.success(f"Retry complete! Processed {top_n} previously failed URLs.")
+                     else:
+                         st.success(f"Verification complete! Checked {top_n} URLs for mentions of \'{verify_brand_name}\'.")
+                     time.sleep(1)
+                     st.rerun()
+
+             # -----------------------------------------------------------------
+             # VISUALIZATIONS (only when Mentions Brand column exists)
+             # -----------------------------------------------------------------
+             if "Mentions Brand" in df_disp.columns:
+                 import plotly.express as px
+
+                 st.markdown("---")
+                 st.subheader("📊 Brand Mention Analysis")
+
+                 if include_unchecked:
+                     df_viz = df_disp.copy()
+                 else:
+                     df_viz = df_disp[df_disp["Mentions Brand"] != "⏳ Unchecked"].copy()
+
+                 if exclude_failed:
+                     df_viz = df_viz[df_viz["Mentions Brand"] != "⚠️ Crawl Failed"].copy()
+
+                 if df_viz.empty:
+                     st.warning("No data to visualize. Try running verification first.")
+                 else:
+                     # --- ROW 1: Pie Charts ---
+                     st.markdown("#### Distribution of Brand Mentions")
+                     col_pie1, col_pie2 = st.columns(2)
+
+                     color_map = {
+                         "✅ Yes": "#2ecc71",
+                         "❌ No": "#e74c3c",
+                         "⚠️ Crawl Failed": "#f39c12",
+                         "⏳ Unchecked": "#95a5a6"
+                     }
+
+                     with col_pie1:
+                         count_df = df_viz["Mentions Brand"].value_counts().reset_index()
+                         count_df.columns = ["Status", "Count"]
+                         fig_pie_count = px.pie(
+                             count_df,
+                             names="Status",
+                             values="Count",
+                             title="By URL Count (Raw)",
+                             color="Status",
+                             color_discrete_map=color_map
+                         )
+                         fig_pie_count.update_layout(margin=dict(t=40, b=0, l=0, r=0))
+                         st.plotly_chart(fig_pie_count, use_container_width=True)
+
+                     with col_pie2:
+                         weighted_df = df_viz.groupby("Mentions Brand")["URL Cited (%)"].sum().reset_index()
+                         weighted_df.columns = ["Status", "Visibility Share"]
+                         fig_pie_weighted = px.pie(
+                             weighted_df,
+                             names="Status",
+                             values="Visibility Share",
+                             title="By AI Visibility Share (Weighted)",
+                             color="Status",
+                             color_discrete_map=color_map
+                         )
+                         fig_pie_weighted.update_layout(margin=dict(t=40, b=0, l=0, r=0))
+                         st.plotly_chart(fig_pie_weighted, use_container_width=True)
+
+                     # --- ROW 2: Domain Coverage Bar Chart ---
+                     st.markdown("#### Domain Coverage")
+
+                     df_checked = df_viz[df_viz["Mentions Brand"].isin(["✅ Yes", "❌ No"])].copy()
+
+                     if not df_checked.empty:
+                         domain_stats = df_checked.groupby("Domain").agg(
+                             total_checked=("Mentions Brand", "count"),
+                             yes_count=("Mentions Brand", lambda x: (x == "✅ Yes").sum()),
+                             domain_cited_pct=("Domain Cited (%)", "first")
+                         ).reset_index()
+
+                         def get_coverage_color(row):
+                             if row["yes_count"] == row["total_checked"]:
+                                 return "🟢 All Mention Brand"
+                             elif row["yes_count"] > 0:
+                                 return "🟡 Partial Mentions"
+                             else:
+                                 return "🔴 No Mentions"
+
+                         domain_stats["Coverage"] = domain_stats.apply(get_coverage_color, axis=1)
+                         domain_stats = domain_stats.sort_values(by="domain_cited_pct", ascending=False)
+
+                         coverage_color_map = {
+                             "🟢 All Mention Brand": "#2ecc71",
+                             "🟡 Partial Mentions": "#f39c12",
+                             "🔴 No Mentions": "#e74c3c"
+                         }
+
+                         fig_bar = px.bar(
+                             domain_stats,
+                             x="Domain",
+                             y="domain_cited_pct",
+                             color="Coverage",
+                             color_discrete_map=coverage_color_map,
+                             labels={"domain_cited_pct": "Domain Cited (%)", "Domain": "Domain"},
+                             title="Domain Brand Coverage"
+                         )
+                         fig_bar.update_layout(
+                             xaxis_tickangle=-45,
+                             margin=dict(t=40, b=100),
+                             height=500,
+                             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                         )
+                         st.plotly_chart(fig_bar, use_container_width=True)
+                         st.caption("🟢 **Green**: All checked URLs for this domain mention the brand. 🟡 **Yellow**: Some URLs mention it. 🔴 **Red**: No checked URLs mention the brand.")
+                     else:
+                         st.info("No checked URLs available for domain coverage chart.")
+
+                     # --- ROW 3: Scatter Plot ---
+                     st.markdown("#### Citation Frequency vs. Brand Mention Rate")
+
+                     df_scatter_base = df_viz[df_viz["Mentions Brand"].isin(["✅ Yes", "❌ No"])].copy()
+
+                     if not df_scatter_base.empty:
+                         scatter_domain = df_scatter_base.groupby("Domain").agg(
+                             domain_prompts=("Domain Prompts", "first"),
+                             domain_cited_pct=("Domain Cited (%)", "first"),
+                             total_urls=("Mentions Brand", "count"),
+                             mention_yes=("Mentions Brand", lambda x: (x == "✅ Yes").sum())
+                         ).reset_index()
+
+                         scatter_domain["% URLs Mentioning Brand"] = (
+                             scatter_domain["mention_yes"] / scatter_domain["total_urls"] * 100
+                         )
+
+                         fig_scatter = px.scatter(
+                             scatter_domain,
+                             x="domain_prompts",
+                             y="% URLs Mentioning Brand",
+                             size="domain_cited_pct",
+                             hover_name="Domain",
+                             labels={
+                                 "domain_prompts": "Domain Prompts (Citation Frequency)",
+                                 "domain_cited_pct": "Domain Cited (%)"
+                             },
+                             title="Citation Frequency vs. Brand Mention Rate",
+                             size_max=60
+                         )
+                         fig_scatter.update_layout(
+                             margin=dict(t=40, b=0),
+                             height=500
+                         )
+                         st.plotly_chart(fig_scatter, use_container_width=True)
+                     else:
+                         st.info("No checked URLs available for scatter plot.")
+
+                     # --- ROW 4: Missed Opportunities Table ---
+                     st.subheader("🚫 Missed Opportunities (High Visibility, No Mentions)")
+                     
+                     df_checked = df_viz[df_viz["Mentions Brand"].isin(["✅ Yes", "❌ No"])]
+                     
+                     if df_checked.empty:
+                         st.info("No successfully checked URLs available yet to identify missed opportunities.")
+                     else:
+                         df_missed = df_checked[df_checked["Mentions Brand"] == "❌ No"].sort_values(
+                             by="URL Cited (%)", ascending=False
+                         )
+
+                         if not df_missed.empty:
+                             # CSV Download Options for Missed Opportunities
+                             col_dl1_missed, col_dl2_missed = st.columns([1, 2])
+                             with col_dl1_missed:
+                                 csv_format_missed = st.selectbox(
+                                     "CSV Export Format", 
+                                     ["Standard CSV (, separator, . decimal)", "EU Excel Ready (; separator, , decimal)"], 
+                                     key="csv_format_missed",
+                                     label_visibility="collapsed"
+                                 )
+                             
+                             if "EU Excel" in csv_format_missed:
+                                 df_csv_missed = df_missed.copy()
+                                 for col in df_csv_missed.select_dtypes(include=['float64', 'float32']).columns:
+                                     df_csv_missed[col] = df_csv_missed[col].apply(lambda x: str(x).replace('.', ','))
+                                 csv_missed = df_csv_missed.to_csv(index=False, sep=';').encode('utf-8')
+                             else:
+                                 csv_missed = df_missed.to_csv(index=False).encode('utf-8')
+                             
+                             with col_dl2_missed:
+                                 st.download_button(
+                                     label="⬇️ Download CSV",
+                                     data=csv_missed,
+                                     file_name=f"{verify_brand_name.replace(' ', '_')}_Missed_Opportunities.csv",
+                                     mime="text/csv",
+                                     key="download_missed_csv"
+                                 )
+
+                             st.dataframe(
+                                 df_missed,
+                                 column_config={
+                                     "Full URL": st.column_config.LinkColumn("Full URL"),
+                                     "URL Cited (%)": st.column_config.ProgressColumn(
+                                         "URL Cited (%)",
+                                         format="%.1f%%",
+                                         min_value=0,
+                                         max_value=100
+                                     ),
+                                     "Domain Cited (%)": st.column_config.ProgressColumn(
+                                         "Domain Cited (%)",
+                                         format="%.1f%%",
+                                         min_value=0,
+                                         max_value=100
+                                     )
+                                 },
+                                 hide_index=True,
+                                 width="stretch",
+                                 height=400
+                             )
+                         else:
+                             st.success("No missed opportunities found — all successfully checked URLs mention the brand!")
+
+                     # --- ROW 5: Enemy Territory Analysis ---
+                     st.markdown("---")
+                     st.subheader("⚠️ Enemy Territory")
+                     st.markdown("These are high-priority URLs that actively cite 2 or more of your competitors, but **do not** mention your brand. The AI engines are learning about the market from these pages while you are excluded.")
+                     
+                     if "Competitor Count" not in df_checked.columns:
+                         st.info("Run brand verification to unlock Enemy Territory analytics.")
+                     elif df_checked.empty:
+                         st.info("No successfully checked URLs available yet to identify Enemy Territory.")
+                     else:
+                         df_enemy = df_checked[
+                             (df_checked["Mentions Brand"] == "❌ No") & 
+                             (df_checked["Competitor Count"] >= 2)
+                         ].copy()
+                         
+                         if df_enemy.empty:
+                             st.success("No enemy territory found!")
+                         else:
+                             # 1. The Threat Matrix (Scatter Plot)
+                             fig_threat = px.scatter(
+                                 df_enemy,
+                                 x="Competitor Count",
+                                 y="URL Cited (%)",
+                                 size="Domain Prompts",
+                                 hover_name="Domain",
+                                 color="Competitor Count",
+                                 color_continuous_scale="Reds",
+                                 title="The Threat Matrix (Size = Prompts)"
+                             )
+                             fig_threat.update_layout(margin=dict(t=40, b=0), height=400)
+                             
+                             # 2. Share of Enemy Voice (Horizontal Bar)
+                             # Split comma-separated competitors into individual rows
+                             comp_series = df_enemy["Mentioned Competitors"].str.split(", ").explode()
+                             comp_counts = comp_series.value_counts().reset_index()
+                             comp_counts.columns = ["Competitor", "Frequency"]
+                             
+                             fig_enemy_voice = px.bar(
+                                 comp_counts,
+                                 x="Frequency",
+                                 y="Competitor",
+                                 orientation='h',
+                                 title="Share of Enemy Voice",
+                                 color="Frequency",
+                                 color_continuous_scale="Reds"
+                             )
+                             fig_enemy_voice.update_layout(yaxis={'categoryorder':'total ascending'}, margin=dict(t=40, b=0), height=400)
+                             
+                             # Display charts side-by-side
+                             col_threat, col_voice = st.columns(2)
+                             with col_threat:
+                                 st.plotly_chart(fig_threat, use_container_width=True)
+                             with col_voice:
+                                 st.plotly_chart(fig_enemy_voice, use_container_width=True)
+                                 
+                             # 3. Enemy Territory Grid
+                             st.markdown("#### High-Priority Targets")
+                             df_enemy_sorted = df_enemy.sort_values(by="URL Cited (%)", ascending=False)
+                             st.dataframe(
+                                 df_enemy_sorted,
+                                 column_config={
+                                     "Full URL": st.column_config.LinkColumn("Full URL"),
+                                     "Mentioned Competitors": st.column_config.TextColumn("Competitors Found"),
+                                     "URL Cited (%)": st.column_config.ProgressColumn(
+                                         "URL Cited (%)",
+                                         format="%.1f%%",
+                                         min_value=0,
+                                         max_value=100
+                                     ),
+                                     "Domain Cited (%)": st.column_config.ProgressColumn(
+                                         "Domain Cited (%)",
+                                         format="%.1f%%",
+                                         min_value=0,
+                                         max_value=100
+                                     )
+                                 },
+                                 hide_index=True,
+                                 width="stretch"
+                             )
+
     with tab_source_trends:
         st.markdown("## 📈 Source Trends")
         st.info("Track the historical usage of specific domains cited by AI engines over time.")
@@ -3383,7 +3796,8 @@ elif current_page == "LLM Monitoring":
             col_brand, col_comp, col_tag, col_date = st.columns([1, 1, 1, 1])
             with col_brand:
                 brand_options_trends = ["All Brands (Excl. GEO/Inst)"] + list(ACCURANKER_BRANDS.keys())
-                trends_brand_name = st.selectbox("Select Brand", brand_options_trends, index=1, key="trends_brand")
+                trends_default_idx = brand_options_trends.index("Saxo BE") if "Saxo BE" in brand_options_trends else 1
+                trends_brand_name = st.selectbox("Select Brand", brand_options_trends, index=trends_default_idx, key="trends_brand")
                 if trends_brand_name == "All Brands (Excl. GEO/Inst)":
                     trends_brand_id = [v for k, v in ACCURANKER_BRANDS.items() if k not in ["GEO Experiments", "Saxo Institutional"]]
                     # Use Saxo DK for tag fetching as a fallback
@@ -3676,7 +4090,9 @@ elif current_page == "LLM Monitoring":
         with st.container(border=True):
             col_brand, col_tag = st.columns([1, 1])
             with col_brand:
-                scrap_brand_name = st.selectbox("Select Market (Brand)", list(ACCURANKER_BRANDS.keys()), key="scrap_brand")
+                scrap_brand_list = list(ACCURANKER_BRANDS.keys())
+                scrap_default_idx = scrap_brand_list.index("Saxo BE") if "Saxo BE" in scrap_brand_list else 0
+                scrap_brand_name = st.selectbox("Select Market (Brand)", scrap_brand_list, index=scrap_default_idx, key="scrap_brand")
                 scrap_brand_id = ACCURANKER_BRANDS[scrap_brand_name]
                 
             with col_tag:

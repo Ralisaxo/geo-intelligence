@@ -1464,6 +1464,165 @@ def fetch_accuranker_sources(brand_id, tag, start_date, end_date, api_token, cal
         df = df.sort_values(by=["Domain Cited (%)", "URL Cited (%)"], ascending=[False, False]).reset_index(drop=True)
     return df
 
+def verify_urls_with_dataforseo(urls_list, brand_name, login, password, progress_callback=None, tracked_details=None):
+    """
+    Verifies if a list of URLs mention a given brand name using the DataForSEO
+    OnPage Content Parsing Live API.
+    
+    Uses ThreadPoolExecutor to send parallel requests (API limits Live endpoint to 1 URL/request).
+    Returns: dict mapping url -> status dict (Mentions Brand, Mentioned Competitors, Competitor Count)
+    """
+    import base64
+    
+    if not urls_list or not brand_name or not login or not password:
+        return {}
+    
+    api_url = "https://api.dataforseo.com/v3/on_page/content_parsing/live"
+    
+    # Handle if the password is ALREADY the combined base64 'login:password'
+    cred = None
+    try:
+        decoded = base64.b64decode(password).decode('utf-8')
+        if decoded.startswith(login + ":"):
+            cred = password
+    except Exception:
+        pass
+        
+    if not cred:
+        cred = base64.b64encode(f"{login}:{password}".encode()).decode()
+        
+    headers = {
+        "Authorization": f"Basic {cred}",
+        "Content-Type": "application/json"
+    }
+    
+    brand_lower = brand_name.lower()
+    results = {}
+    total = len(urls_list)
+    
+    import concurrent.futures
+    
+    # Prepare competitor tracking variations
+    competitor_tracking = {}
+    if tracked_details:
+        for comp_name, comp_info in tracked_details.items():
+            if comp_name.lower() == brand_lower or brand_lower in comp_name.lower():
+                continue
+            aliases = [a.lower() for a in comp_info.get("brand_list", [])]
+            aliases.append(comp_name.lower())
+            competitor_tracking[comp_name] = list(set(aliases))
+            
+    def process_url(url):
+        post_data = [{
+            "url": url,
+            "disable_cookie_popup": True,
+            "enable_javascript": False,
+            "enable_browser_rendering": False
+        }]
+        
+        try:
+            response = requests.post(api_url, headers=headers, json=post_data, timeout=60)
+            response.raise_for_status()
+            data = response.json()
+            
+            tasks = data.get("tasks", [])
+            if not tasks:
+                return url, {
+                    "Mentions Brand": "⚠️ Crawl Failed",
+                    "Mentioned Competitors": "",
+                    "Competitor Count": 0
+                }
+            
+            task = tasks[0]
+            if task.get("status_code") != 20000:
+                return url, {
+                    "Mentions Brand": "⚠️ Crawl Failed",
+                    "Mentioned Competitors": "",
+                    "Competitor Count": 0
+                }
+                
+            task_result = task.get("result")
+            if not task_result:
+                return url, {
+                    "Mentions Brand": "⚠️ Crawl Failed",
+                    "Mentioned Competitors": "",
+                    "Competitor Count": 0
+                }
+                
+            items = task_result[0].get("items")
+            if not items:
+                return url, {
+                    "Mentions Brand": "⚠️ Crawl Failed",
+                    "Mentioned Competitors": "",
+                    "Competitor Count": 0
+                }
+                
+            items_str = json.dumps(items).lower()
+            import re
+            
+            # Check main brand
+            mentions_main_brand = False
+            if brand_lower in ["ig", "ing"]:
+                if re.search(r'\b' + re.escape(brand_lower) + r'\b', items_str):
+                    mentions_main_brand = True
+            else:
+                if brand_lower in items_str:
+                    mentions_main_brand = True
+            
+            found_comps = []
+            if competitor_tracking:
+                for comp_name, aliases in competitor_tracking.items():
+                    comp_name_lower = comp_name.lower()
+                    if comp_name_lower in ["ig", "ing"]:
+                        found_comp_alias = False
+                        for alias in aliases:
+                            if re.search(r'\b' + re.escape(alias) + r'\b', items_str):
+                                found_comp_alias = True
+                                break
+                        if found_comp_alias:
+                            found_comps.append(comp_name)
+                    else:
+                        if any(alias in items_str for alias in aliases):
+                            found_comps.append(comp_name)
+            
+            return url, {
+                "Mentions Brand": "✅ Yes" if mentions_main_brand else "❌ No",
+                "Mentioned Competitors": ", ".join(sorted(found_comps)),
+                "Competitor Count": len(found_comps)
+            }
+                
+        except Exception as e:
+            print(f"DataForSEO API Error for {url}: {e}")
+            return url, {
+                "Mentions Brand": "⚠️ Crawl Failed",
+                "Mentioned Competitors": "",
+                "Competitor Count": 0
+            }
+
+    processed = 0
+    # Process concurrently (using 5 workers to be safe with rate limits)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_url = {executor.submit(process_url, url): url for url in urls_list}
+        
+        for future in concurrent.futures.as_completed(future_to_url):
+            url = future_to_url[future]
+            try:
+                result_url, status_dict = future.result()
+                results[result_url] = status_dict
+            except Exception as e:
+                print(f"Exception for {url}: {e}")
+                results[url] = {
+                    "Mentions Brand": "⚠️ Crawl Failed",
+                    "Mentioned Competitors": "",
+                    "Competitor Count": 0
+                }
+                
+            processed += 1
+            if progress_callback:
+                progress_callback(processed, total)
+    
+    return results
+
 def fetch_source_trends(brand_id, tag, start_date, end_date, api_token):
     """
     Fetches all prompts for a given date range and extracts all cited source domains over time.
