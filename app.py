@@ -1501,7 +1501,7 @@ elif current_page == "Semantic Triples":
             display_df = sim_df.reset_index()
             display_df = display_df.rename(columns={"index": "Brand"})
 
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
+            st.dataframe(display_df, width="stretch", hide_index=True)
 
             sp_csv_col1, sp_csv_col2 = st.columns([2, 1])
             with sp_csv_col1:
@@ -2354,7 +2354,7 @@ elif current_page == "LLM Monitoring":
             if 'kpi_prompts_df' in st.session_state and st.session_state.kpi_prompts_df is not None and not st.session_state.kpi_prompts_df.empty:
                  num_prompts = len(st.session_state.kpi_prompts_df)
                  with st.expander(f"View {num_prompts} Matched Prompts", expanded=False):
-                      st.dataframe(st.session_state.kpi_prompts_df, use_container_width=True, hide_index=True)
+                      st.dataframe(st.session_state.kpi_prompts_df, width="stretch", hide_index=True)
             
     with tab_comp_overview:
         st.markdown("## 🏎️ Competitive Overview")
@@ -2642,7 +2642,7 @@ elif current_page == "LLM Monitoring":
                 table_cols += ['Δ Visibility', 'Δ Sentiment']
             df_table = df_agg[table_cols].copy()
             df_table = df_table.sort_values(by='Visibility', ascending=False)
-            st.dataframe(df_table, use_container_width=True, hide_index=True, height=500)
+            st.dataframe(df_table, width="stretch", hide_index=True, height=500)
             
             # --- AI Analysis ---
             st.markdown("#### 🤖 AI Strategic Analysis")
@@ -3520,6 +3520,7 @@ elif current_page == "LLM Monitoring":
                  else:
                      # --- ROW 1: Pie Charts ---
                      st.markdown("#### Distribution of Brand Mentions")
+                     st.caption("Visualizes the proportion of verified AI engine citations that include your brand.")
                      col_pie1, col_pie2 = st.columns(2)
 
                      color_map = {
@@ -3557,8 +3558,156 @@ elif current_page == "LLM Monitoring":
                          fig_pie_weighted.update_layout(margin=dict(t=40, b=0, l=0, r=0))
                          st.plotly_chart(fig_pie_weighted, use_container_width=True)
 
+                     # --- ROW 1.5: Share of Market Voice ---
+                     st.markdown("#### Share of Market Voice")
+                     st.caption("Aggregates your main brand natively against every recorded mention of any tracked competitor across the completely scraped dataset.")
+                     
+                     brand_counts = []
+                     df_sov = df_viz[df_viz["Mentions Brand"].isin(["✅ Yes", "❌ No"])].copy()
+                     if not df_sov.empty:
+                         brand_yes_mask = df_sov["Mentions Brand"] == "✅ Yes"
+                         raw_brand_count = brand_yes_mask.sum()
+                         weighted_brand_score = df_sov.loc[brand_yes_mask, "URL Cited (%)"].sum()
+                         
+                         if raw_brand_count > 0:
+                             brand_counts.append({"Brand": verify_brand_name, "Raw Count": raw_brand_count, "Weighted Score": weighted_brand_score, "Type": "Main Brand"})
+                             
+                         comps_df = df_sov[["Mentioned Competitors", "URL Cited (%)"]].dropna()
+                         comps_exploded = comps_df.assign(
+                             Competitor=comps_df["Mentioned Competitors"].str.split(", ")
+                         ).explode("Competitor")
+                         
+                         comps_exploded = comps_exploded[comps_exploded["Competitor"].str.strip() != ""]
+                         
+                         if not comps_exploded.empty:
+                             comp_stats = comps_exploded.groupby("Competitor").agg(
+                                 Raw_Count=("Competitor", "count"),
+                                 Weighted_Score=("URL Cited (%)", "sum")
+                             ).reset_index()
+                             
+                             for _, row in comp_stats.iterrows():
+                                 brand_counts.append({
+                                     "Brand": row["Competitor"],
+                                     "Raw Count": row["Raw_Count"],
+                                     "Weighted Score": row["Weighted_Score"],
+                                     "Type": "Competitor"
+                                 })
+                                 
+                         sov_df = pd.DataFrame(brand_counts)
+                         
+                         if not sov_df.empty:
+                             sov_df_raw = sov_df.sort_values(by="Raw Count", ascending=True)
+                             fig_sov_raw = px.bar(
+                                 sov_df_raw,
+                                 x="Raw Count",
+                                 y="Brand",
+                                 orientation='h',
+                                 color="Type",
+                                 color_discrete_map={"Main Brand": "#2ecc71", "Competitor": "#e74c3c"},
+                                 title="Total Market Voice (By Mentions Count)"
+                             )
+                             fig_sov_raw.update_layout(margin=dict(t=40, b=0), height=400, showlegend=False, yaxis={'categoryorder':'total ascending'})
+                             
+                             sov_df_weight = sov_df.sort_values(by="Weighted Score", ascending=True)
+                             fig_sov_weight = px.bar(
+                                 sov_df_weight,
+                                 x="Weighted Score",
+                                 y="Brand",
+                                 orientation='h',
+                                 color="Type",
+                                 color_discrete_map={"Main Brand": "#2ecc71", "Competitor": "#e74c3c"},
+                                 title="Total Market Voice (By Weighted Visibility %)"
+                             )
+                             fig_sov_weight.update_layout(margin=dict(t=40, b=0), height=400, showlegend=False, yaxis={'categoryorder':'total ascending'})
+                             
+                             col_sov1, col_sov2 = st.columns(2)
+                             with col_sov1:
+                                 st.plotly_chart(fig_sov_raw, use_container_width=True)
+                             with col_sov2:
+                                 st.plotly_chart(fig_sov_weight, use_container_width=True)
+
+                     # --- ROW 1.75: Correlation Analysis: Total Market Voice vs SERP Visibility ---
+                     if "calc_latest_only" in locals() and calc_latest_only and not sov_df.empty:
+                         if len(date_range) == 2:
+                             corr_start_date, corr_end_date = date_range
+                         else:
+                             from datetime import datetime, timedelta
+                             corr_end_date = datetime.today()
+                             corr_start_date = corr_end_date - timedelta(days=180)
+                             
+                         with st.spinner("Fetching latest SERP Visibility data for correlation analysis..."):
+                             df_kpi_all = backend.fetch_competitive_overview(
+                                 ext_brand_id, 
+                                 verify_brand_name.strip(), 
+                                 "Commercial", 
+                                 corr_start_date, 
+                                 corr_end_date, 
+                                 accuranker_token
+                             )
+                             
+                         if not df_kpi_all.empty:
+                             st.markdown("---")
+                             st.markdown("#### Market Voice vs. SERP Visibility")
+                             st.caption("Correlates the AI-driven Total Market Voice (Weighted) against traditional Google Search Engine Visibility ('Commercial' tag). Exclusively uses the latest recorded snapshot date.")
+                             
+                             latest_date = df_kpi_all["Date"].max()
+                             df_latest_vis = df_kpi_all[df_kpi_all["Date"] == latest_date].copy()
+                             
+                             if not df_latest_vis.empty:
+                                 df_latest_vis["Brand"] = df_latest_vis["Competitor"]
+                                 
+                                 corr_df = pd.merge(sov_df, df_latest_vis[["Brand", "Visibility"]], on="Brand", how="inner")
+                                 
+                                 if not corr_df.empty:
+                                     corr_df_sorted = corr_df.sort_values(by="Weighted Score", ascending=True)
+                                     
+                                     col_corr1, col_corr2 = st.columns(2)
+                                     with col_corr1:
+                                         fig_corr_voice = px.bar(
+                                             corr_df_sorted,
+                                             x="Weighted Score",
+                                             y="Brand",
+                                             orientation='h',
+                                             color="Type",
+                                             color_discrete_map={"Main Brand": "#2ecc71", "Competitor": "#e74c3c"},
+                                             title="AI Total Market Voice (Weighted %)"
+                                         )
+                                         fig_corr_voice.update_layout(margin=dict(t=40, b=0), height=400, showlegend=False, yaxis={'categoryorder':'array', 'categoryarray': corr_df_sorted['Brand']})
+                                         st.plotly_chart(fig_corr_voice, use_container_width=True)
+                                         
+                                     with col_corr2:
+                                         fig_corr_vis = px.bar(
+                                             corr_df_sorted,
+                                             x="Visibility",
+                                             y="Brand",
+                                             orientation='h',
+                                             color="Type",
+                                             color_discrete_map={"Main Brand": "#2ecc71", "Competitor": "#e74c3c"},
+                                             title=f"Search Engine Visibility (Commercial, {latest_date})"
+                                         )
+                                         fig_corr_vis.update_layout(margin=dict(t=40, b=0), height=400, showlegend=False, yaxis={'categoryorder':'array', 'categoryarray': corr_df_sorted['Brand']})
+                                         st.plotly_chart(fig_corr_vis, use_container_width=True)
+                                         
+                                     fig_corr_scatter = px.scatter(
+                                         corr_df,
+                                         x="Visibility",
+                                         y="Weighted Score",
+                                         color="Type",
+                                         text="Brand",
+                                         trendline="ols",
+                                         trendline_scope="overall",
+                                         color_discrete_map={"Main Brand": "#2ecc71", "Competitor": "#e74c3c"},
+                                         title="Correlation: SEO Visibility vs. AI Penetration",
+                                         labels={"Visibility": "Search Engine Visibility (AccuRanker)", "Weighted Score": "AI Market Voice (Weighted %)"}
+                                     )
+                                     fig_corr_scatter.update_traces(textposition='top center', marker=dict(size=12))
+                                     fig_corr_scatter.update_layout(margin=dict(t=40, b=0), height=500, showlegend=False)
+                                     st.plotly_chart(fig_corr_scatter, use_container_width=True)
+
+
                      # --- ROW 2: Domain Coverage Bar Chart ---
                      st.markdown("#### Domain Coverage")
+                     st.caption("Visualizes which domains frequently cite your brand versus where your brand is completely missing.")
 
                      df_checked = df_viz[df_viz["Mentions Brand"].isin(["✅ Yes", "❌ No"])].copy()
 
@@ -3596,6 +3745,7 @@ elif current_page == "LLM Monitoring":
                              title="Domain Brand Coverage"
                          )
                          fig_bar.update_layout(
+                             xaxis={'categoryorder':'array', 'categoryarray': domain_stats['Domain']},
                              xaxis_tickangle=-45,
                              margin=dict(t=40, b=100),
                              height=500,
@@ -3608,6 +3758,7 @@ elif current_page == "LLM Monitoring":
 
                      # --- ROW 3: Scatter Plot ---
                      st.markdown("#### Citation Frequency vs. Brand Mention Rate")
+                     st.caption("Maps citation frequency (prompts) against how often your brand appears on the source domain. Bubble size indicates total domain citation weight.")
 
                      df_scatter_base = df_viz[df_viz["Mentions Brand"].isin(["✅ Yes", "❌ No"])].copy()
 
@@ -3646,6 +3797,7 @@ elif current_page == "LLM Monitoring":
 
                      # --- ROW 4: Missed Opportunities Table ---
                      st.subheader("🚫 Missed Opportunities (High Visibility, No Mentions)")
+                     st.caption("Highlights high-visibility URLs that cite other information but completely exclude your brand.")
                      
                      df_checked = df_viz[df_viz["Mentions Brand"].isin(["✅ Yes", "❌ No"])]
                      
@@ -4051,11 +4203,11 @@ elif current_page == "LLM Monitoring":
                      if col != 'Date':
                          pivot_df[col] = pivot_df[col].map(lambda x: f"{x:.2f}%")
                          
-                 st.dataframe(pivot_df, use_container_width=True, hide_index=True)
+                 st.dataframe(pivot_df, width="stretch", hide_index=True)
                  
                  # Raw Data underneath for exact numbers
                  with st.expander("View Raw Export Data", expanded=False):
-                     st.dataframe(plot_df, use_container_width=True, hide_index=True)
+                     st.dataframe(plot_df, width="stretch", hide_index=True)
                  
                  # Export buttons
                  export_col1, export_col2 = st.columns([2, 1])
