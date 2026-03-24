@@ -1359,7 +1359,7 @@ elif current_page == "Semantic Triples":
                 legend_title="Type",
                 margin=dict(l=10, r=10, t=30, b=10)
             )
-            st.plotly_chart(fig_gravity, use_container_width=True)
+            st.plotly_chart(fig_gravity, width="stretch")
 
             st.markdown("---")
 
@@ -1471,7 +1471,7 @@ elif current_page == "Semantic Triples":
                              showarrow=False, font=dict(size=13, color="#2ecc71"), yanchor="top"),
                     ]
                 )
-                st.plotly_chart(fig_quad, use_container_width=True)
+                st.plotly_chart(fig_quad, width="stretch")
 
             st.markdown("---")
 
@@ -1493,7 +1493,7 @@ elif current_page == "Semantic Triples":
                 height=max(400, len(brand_names) * 35),
                 margin=dict(l=10, r=10, t=30, b=10)
             )
-            st.plotly_chart(fig_heatmap, use_container_width=True)
+            st.plotly_chart(fig_heatmap, width="stretch")
 
             # --- Data Table & CSV Download ---
             st.markdown("### 📊 Similarity Data")
@@ -2627,7 +2627,7 @@ elif current_page == "LLM Monitoring":
                 height=800
             ).interactive()
             
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, width="stretch")
             
             # Warn about missing favicons
             missing_favs = df_agg[df_agg['FaviconBase64'].isnull()]
@@ -3324,7 +3324,7 @@ elif current_page == "LLM Monitoring":
                  ).properties(
                      height=400
                  ).interactive()
-                 st.altair_chart(chart, use_container_width=True)
+                 st.altair_chart(chart, width="stretch")
                  st.markdown("---")
              
              # CSV Download Options
@@ -3542,7 +3542,7 @@ elif current_page == "LLM Monitoring":
                              color_discrete_map=color_map
                          )
                          fig_pie_count.update_layout(margin=dict(t=40, b=0, l=0, r=0))
-                         st.plotly_chart(fig_pie_count, use_container_width=True)
+                         st.plotly_chart(fig_pie_count, width="stretch")
 
                      with col_pie2:
                          weighted_df = df_viz.groupby("Mentions Brand")["URL Cited (%)"].sum().reset_index()
@@ -3556,7 +3556,7 @@ elif current_page == "LLM Monitoring":
                              color_discrete_map=color_map
                          )
                          fig_pie_weighted.update_layout(margin=dict(t=40, b=0, l=0, r=0))
-                         st.plotly_chart(fig_pie_weighted, use_container_width=True)
+                         st.plotly_chart(fig_pie_weighted, width="stretch")
 
                      # --- ROW 1.5: Share of Market Voice ---
                      st.markdown("#### Share of Market Voice")
@@ -3622,9 +3622,9 @@ elif current_page == "LLM Monitoring":
                              
                              col_sov1, col_sov2 = st.columns(2)
                              with col_sov1:
-                                 st.plotly_chart(fig_sov_raw, use_container_width=True)
+                                 st.plotly_chart(fig_sov_raw, width="stretch")
                              with col_sov2:
-                                 st.plotly_chart(fig_sov_weight, use_container_width=True)
+                                 st.plotly_chart(fig_sov_weight, width="stretch")
 
                      # --- ROW 1.75: Correlation Analysis: Total Market Voice vs SERP Visibility ---
                      if "calc_latest_only" in locals() and calc_latest_only and not sov_df.empty:
@@ -3673,7 +3673,7 @@ elif current_page == "LLM Monitoring":
                                              title="AI Total Market Voice (Weighted %)"
                                          )
                                          fig_corr_voice.update_layout(margin=dict(t=40, b=0), height=400, showlegend=False, yaxis={'categoryorder':'array', 'categoryarray': corr_df_sorted['Brand']})
-                                         st.plotly_chart(fig_corr_voice, use_container_width=True)
+                                         st.plotly_chart(fig_corr_voice, width="stretch")
                                          
                                      with col_corr2:
                                          fig_corr_vis = px.bar(
@@ -3686,7 +3686,7 @@ elif current_page == "LLM Monitoring":
                                              title=f"Search Engine Visibility (Commercial, {latest_date})"
                                          )
                                          fig_corr_vis.update_layout(margin=dict(t=40, b=0), height=400, showlegend=False, yaxis={'categoryorder':'array', 'categoryarray': corr_df_sorted['Brand']})
-                                         st.plotly_chart(fig_corr_vis, use_container_width=True)
+                                         st.plotly_chart(fig_corr_vis, width="stretch")
                                          
                                      fig_corr_scatter = px.scatter(
                                          corr_df,
@@ -3702,7 +3702,7 @@ elif current_page == "LLM Monitoring":
                                      )
                                      fig_corr_scatter.update_traces(textposition='top center', marker=dict(size=12))
                                      fig_corr_scatter.update_layout(margin=dict(t=40, b=0), height=500, showlegend=False)
-                                     st.plotly_chart(fig_corr_scatter, use_container_width=True)
+                                     st.plotly_chart(fig_corr_scatter, width="stretch")
 
 
                      # --- ROW 2: Domain Coverage Bar Chart ---
@@ -3751,7 +3751,7 @@ elif current_page == "LLM Monitoring":
                              height=500,
                              legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                          )
-                         st.plotly_chart(fig_bar, use_container_width=True)
+                         st.plotly_chart(fig_bar, width="stretch")
                          st.caption("🟢 **Green**: All checked URLs for this domain mention the brand. 🟡 **Yellow**: Some URLs mention it. 🔴 **Red**: No checked URLs mention the brand.")
                      else:
                          st.info("No checked URLs available for domain coverage chart.")
@@ -3791,7 +3791,7 @@ elif current_page == "LLM Monitoring":
                              margin=dict(t=40, b=0),
                              height=500
                          )
-                         st.plotly_chart(fig_scatter, use_container_width=True)
+                         st.plotly_chart(fig_scatter, width="stretch")
                      else:
                          st.info("No checked URLs available for scatter plot.")
 
@@ -3911,9 +3911,9 @@ elif current_page == "LLM Monitoring":
                              # Display charts side-by-side
                              col_threat, col_voice = st.columns(2)
                              with col_threat:
-                                 st.plotly_chart(fig_threat, use_container_width=True)
+                                 st.plotly_chart(fig_threat, width="stretch")
                              with col_voice:
-                                 st.plotly_chart(fig_enemy_voice, use_container_width=True)
+                                 st.plotly_chart(fig_enemy_voice, width="stretch")
                                  
                              # 3. Enemy Territory Grid
                              st.markdown("#### High-Priority Targets")
@@ -4176,7 +4176,7 @@ elif current_page == "LLM Monitoring":
                      title=chart_title
                  ).interactive()
                  
-                 st.altair_chart(chart, use_container_width=True)
+                 st.altair_chart(chart, width="stretch")
                  
                  # Display Data Table
                  st.markdown("### Data Details")
@@ -4222,7 +4222,7 @@ elif current_page == "LLM Monitoring":
                              data=csv_standard,
                              file_name=f"source_trends_{trends_brand_name.replace(' ', '_')}.csv",
                              mime="text/csv",
-                             use_container_width=True,
+                             width="stretch",
                              key="dl_trends_std"
                          )
                      with sub_c2:
@@ -4231,9 +4231,120 @@ elif current_page == "LLM Monitoring":
                              data=csv_eu,
                              file_name=f"source_trends_eu_{trends_brand_name.replace(' ', '_')}.csv",
                              mime="text/csv",
-                             use_container_width=True,
+                             width="stretch",
                              key="dl_trends_eu"
                          )
+
+                 # --- DOMAIN MOVERS ---
+                 st.markdown("---")
+                 st.markdown("### 🏆 Domain Movers")
+                 st.caption("Analyzes the Top Gainers & Losers across **all** extracted domains in the selected timeframe.")
+                 
+                 # Use agg_df which has all domains aggregated by engine = 'Aggregated'
+                 df_movers_base = df_trends[df_trends['Engine'] == 'Aggregated'].copy()
+                 
+                 # Ensure Date is datetime for comparisons
+                 df_movers_base['Date_dt'] = pd.to_datetime(df_movers_base['Date'])
+                 min_d = df_movers_base['Date_dt'].min()
+                 max_d = df_movers_base['Date_dt'].max()
+                 
+                 if pd.notnull(min_d) and pd.notnull(max_d) and (max_d - min_d).days >= 7:
+                     first_7_end = min_d + pd.Timedelta(days=7)
+                     last_7_start = max_d - pd.Timedelta(days=7)
+                     mid_date = min_d + (max_d - min_d) / 2
+                     
+                     # Periods
+                     df_first_week = df_movers_base[df_movers_base['Date_dt'] <= first_7_end].groupby('Domain')['Domain Cited (%)'].mean().reset_index(name='First Week (%)')
+                     df_last_week = df_movers_base[df_movers_base['Date_dt'] >= last_7_start].groupby('Domain')['Domain Cited (%)'].mean().reset_index(name='Last Week (%)')
+                     df_first_half = df_movers_base[df_movers_base['Date_dt'] <= mid_date].groupby('Domain')['Domain Cited (%)'].mean().reset_index(name='First Half (%)')
+                     df_second_half = df_movers_base[df_movers_base['Date_dt'] > mid_date].groupby('Domain')['Domain Cited (%)'].mean().reset_index(name='Second Half (%)')
+                     
+                     # Merge all
+                     df_movers = df_first_week.merge(df_last_week, on='Domain', how='outer')\
+                                                .merge(df_first_half, on='Domain', how='outer')\
+                                                .merge(df_second_half, on='Domain', how='outer').fillna(0)
+                                                
+                     df_movers['WoW Change (%)'] = df_movers['Last Week (%)'] - df_movers['First Week (%)']
+                     df_movers['Half Change (%)'] = df_movers['Second Half (%)'] - df_movers['First Half (%)']
+                     
+                     # Sort by WoW Change descending
+                     df_movers = df_movers.sort_values(by='WoW Change (%)', ascending=False)
+                     
+                     # Visualizations for Top Gainers and Losers
+                     top_gainers = df_movers.head(15).copy()
+                     top_losers = df_movers.tail(15).copy().sort_values(by='WoW Change (%)', ascending=True)
+                     
+                     # Filter out zero changes
+                     top_gainers = top_gainers[top_gainers['WoW Change (%)'] > 0]
+                     top_losers = top_losers[top_losers['WoW Change (%)'] < 0]
+                     
+                     if not top_gainers.empty or not top_losers.empty:
+                         col_chart1, col_chart2 = st.columns(2)
+                         
+                         with col_chart1:
+                             if not top_gainers.empty:
+                                 chart_gain = alt.Chart(top_gainers).mark_bar(color='#2ecc71').encode(
+                                     y=alt.Y('Domain:N', sort='-x', title='Domain'),
+                                     x=alt.X('WoW Change (%):Q', title='Gain (%)'),
+                                     tooltip=['Domain', 'First Week (%)', 'Last Week (%)', 'WoW Change (%)']
+                                 ).properties(title="🚀 Top 15 Gainers (First vs Last Week)", height=400)
+                                 st.altair_chart(chart_gain, use_container_width=True)
+                             else:
+                                 st.info("No gainers found in this period.")
+                                 
+                         with col_chart2:
+                             if not top_losers.empty:
+                                 # Plot absolute value or just let axis be negative
+                                 chart_loss = alt.Chart(top_losers).mark_bar(color='#e74c3c').encode(
+                                     y=alt.Y('Domain:N', sort='x', title='Domain'),
+                                     x=alt.X('WoW Change (%):Q', title='Loss (%)'),
+                                     tooltip=['Domain', 'First Week (%)', 'Last Week (%)', 'WoW Change (%)']
+                                 ).properties(title="📉 Top 15 Losers (First vs Last Week)", height=400)
+                                 st.altair_chart(chart_loss, use_container_width=True)
+                             else:
+                                 st.info("No losers found in this period.")
+                                 
+                     st.markdown("#### Full Movers Data")
+                     
+                     # Checkbox to toggle full list vs top 100
+                     show_all_movers = st.checkbox("Show all domains (may be slow)", value=False, key="movers_show_all")
+                     
+                     # We must drop the unneeded columns or ensure they are present
+                     df_movers_disp = df_movers if show_all_movers else df_movers.head(100)
+                     # We operate on a copy
+                     df_movers_view = df_movers_disp.copy()
+                     
+                     # Format strictly
+                     for col in ['First Week (%)', 'Last Week (%)', 'First Half (%)', 'Second Half (%)', 'WoW Change (%)', 'Half Change (%)']:
+                         df_movers_view[col] = df_movers_view[col].round(2)
+                         
+                     # Style the dataframe
+                     st.dataframe(
+                         df_movers_view,
+                         column_config={
+                             "Domain": st.column_config.TextColumn("Domain"),
+                             "First Week (%)": st.column_config.NumberColumn("First Week (%)", format="%.2f%%"),
+                             "Last Week (%)": st.column_config.NumberColumn("Last Week (%)", format="%.2f%%"),
+                             "First Half (%)": st.column_config.NumberColumn("First Half (%)", format="%.2f%%"),
+                             "Second Half (%)": st.column_config.NumberColumn("Second Half (%)", format="%.2f%%"),
+                             "WoW Change (%)": st.column_config.NumberColumn("WoW Change (%)", format="%+.2f%%"),
+                             "Half Change (%)": st.column_config.NumberColumn("Half Change (%)", format="%+.2f%%")
+                         },
+                         use_container_width=True,
+                         hide_index=True
+                     )
+                     
+                     # Add CSV Export for Mover Data
+                     csv_movers = df_movers.to_csv(index=False).encode('utf-8')
+                     st.download_button(
+                         label="📥 Download Full Movers CSV",
+                         data=csv_movers,
+                         file_name=f"domain_movers_{trends_brand_name.replace(' ', '_')}.csv",
+                         mime="text/csv",
+                         key="dl_movers_std"
+                     )
+                 else:
+                     st.info("Need at least 7 days of data to compute Domain Movers.")
 
     with tab_scraper:
         st.markdown("## 🕵️‍♂️ Competitor Scraper")
