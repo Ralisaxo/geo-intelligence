@@ -3251,9 +3251,23 @@ elif current_page == "LLM Monitoring":
                 with st.popover("See included competitors"):
                     try:
                         with open("competitors.txt", "r", encoding="utf-8") as f:
+                            st.markdown("**From competitors.txt:**")
                             st.code(f.read(), language="text")
                     except FileNotFoundError:
                         st.info("competitors.txt not found.")
+                        
+                    if accuranker_token and ext_brand_id:
+                        comp_cache_key = f"comps_{ext_brand_id}"
+                        if comp_cache_key not in st.session_state:
+                            with st.spinner("Fetching AccuRanker list..."):
+                                st.session_state[comp_cache_key] = backend.fetch_competitor_details(ext_brand_id, accuranker_token)
+                        
+                        acc_comps_dict = st.session_state.get(comp_cache_key, {})
+                        if acc_comps_dict:
+                            st.markdown("**From AccuRanker:**")
+                            for c_name, aliases in acc_comps_dict.items():
+                                st.caption(f"{c_name}: {', '.join(aliases)}")
+                                
             with comp_col3:
                 st.empty()
             
@@ -3287,15 +3301,39 @@ elif current_page == "LLM Monitoring":
                          if filter_brokerchooser:
                              df_sources = df_sources[~df_sources['Domain'].str.contains('brokerchooser.com', case=False, na=False)]
                          if filter_competitors:
+                             competitors = []
                              try:
                                  with open('competitors.txt', 'r', encoding='utf-8') as f:
                                      competitors = [line.strip().lower() for line in f if line.strip() and not line.startswith('#')]
-                                 if competitors:
-                                     # Filter out any domain that contains any of the competitor strings
-                                     mask = df_sources['Domain'].apply(lambda d: any(comp in str(d).lower() for comp in competitors))
-                                     df_sources = df_sources[~mask]
                              except FileNotFoundError:
-                                 st.warning("competitors.txt not found in the root directory. Filtering skipped.")
+                                 pass
+                                 
+                             # Append dynamically tracked AccuRanker competitors
+                             comp_cache_key = f"comps_{ext_brand_id}"
+                             if comp_cache_key not in st.session_state:
+                                 st.session_state[comp_cache_key] = backend.fetch_competitor_details(ext_brand_id, accuranker_token)
+                             
+                             acc_comps_dict = st.session_state.get(comp_cache_key, {})
+                             for aliases in acc_comps_dict.values():
+                                 competitors.extend([a.lower() for a in aliases])
+                             
+                             competitors = list(set(competitors))
+                             
+                             if competitors:
+                                 def is_competitor_domain(domain, comps):
+                                     domain_lower = str(domain).lower()
+                                     parts = domain_lower.split('.')
+                                     for c in comps:
+                                         if len(c) <= 3 or c in ["ig", "ing", "bux", "xtb"]:
+                                             # Safe exclusion: Short acronyms require exact part match (e.g., 'ig' in 'ig.com')
+                                             if c in parts or f"{c} broker" in domain_lower:
+                                                 return True
+                                         elif c in domain_lower:
+                                             return True
+                                     return False
+                                     
+                                 mask = df_sources['Domain'].apply(lambda d: is_competitor_domain(d, competitors))
+                                 df_sources = df_sources[~mask]
 
                          # Recalculate percentages after filtering? 
                          # Usually percentages should be of the *total* prompts, so we might want to keep the original Cited percentage even if we filter.
