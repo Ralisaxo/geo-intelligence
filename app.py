@@ -4813,34 +4813,48 @@ elif current_page == "Random Tools":
                 with st.spinner(f"Crawling {len(sitemap_list)} sitemap roots..."):
                     
                     status_placeholder = st.empty()
+                    errors_found = []
+                    
                     def update_status(current_url):
                         status_placeholder.info(f"Crawling: {current_url}")
                         
-                    all_urls = backend.extract_all_sitemap_urls(sitemap_list, progress_callback=update_status)
+                    def handle_error(failed_url, error_msg):
+                        errors_found.append((failed_url, error_msg))
+                        
+                    all_urls = backend.extract_all_sitemap_urls(sitemap_list, progress_callback=update_status, error_callback=handle_error)
                     
                     status_placeholder.empty()
                     
+                    if errors_found:
+                        for f_url, err in errors_found:
+                            st.warning(f"⚠️ Failed to fetch sitemap: {f_url} (Error: {err})")
+                            
                     if all_urls:
                         # Categorize URLs
-                        data = [{"URL": u, "Market": backend.categorize_market(u), "Website Category": backend.categorize_website(u)} for u in all_urls]
+                        data = []
+                        for u in all_urls:
+                            combo = backend.extract_market_language_combination(u)
+                            lang = backend.extract_language_from_combination(combo)
+                            slug = backend.extract_url_slug(u)
+                            data.append({
+                                "URL": u, 
+                                "Market": backend.categorize_market(u), 
+                                "Website Category": backend.categorize_website(u),
+                                "market language combination": combo,
+                                "Language": lang,
+                                "URL Slug": slug
+                            })
+                            
                         df_sitemap = pd.DataFrame(data)
                         summary_df = df_sitemap.groupby("Market").size().reset_index(name="Count")
                         summary_category_df = df_sitemap.groupby("Website Category").size().reset_index(name="Count")
                         
-                        # Export formatting
-                        import io
-                        excel_buffer = io.BytesIO()
-                        with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-                            df_sitemap.to_excel(writer, sheet_name="Raw_URLs", index=False)
-                            summary_df.to_excel(writer, sheet_name="Market_Summary", index=False)
-                            summary_category_df.to_excel(writer, sheet_name="Category_Summary", index=False)
-                            
                         # Save to session state
                         st.session_state.sitemap_processed = True
                         st.session_state.sitemap_df = df_sitemap
                         st.session_state.sitemap_summary = summary_df
                         st.session_state.sitemap_category_summary = summary_category_df
-                        st.session_state.sitemap_excel_buffer = excel_buffer.getvalue()
+                        st.session_state.sitemap_excel_buffer = None
                     else:
                         st.warning("No URLs found or unable to fetch the sitemaps.")
             else:
@@ -4862,13 +4876,50 @@ elif current_page == "Random Tools":
                     st.dataframe(st.session_state.sitemap_summary, width="stretch")
                 with sum_tabs[1]:
                     st.dataframe(st.session_state.sitemap_category_summary, width="stretch")
+                    
+            st.divider()
+            st.markdown("##### Export Options")
+            
+            cat_options = ["All"] + sorted(list(st.session_state.sitemap_df["Website Category"].astype(str).unique()))
+            selected_cat = st.selectbox("Export by Website Category", cat_options, index=0)
+            
+            df_export = st.session_state.sitemap_df.copy()
+            if selected_cat != "All":
+                df_export = df_export[df_export["Website Category"] == selected_cat]
+            
+            import io
+            excel_buffer = io.BytesIO()
+            with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
+                df_export.to_excel(writer, sheet_name="Raw_URLs", index=False)
+                
+                if not df_export.empty:
+                    culture_overview = df_export.groupby('URL Slug').agg(
+                        **{
+                            'market language combination': ('market language combination', lambda x: ', '.join(sorted(set(str(i) for i in x)))),
+                            'Versions': ('URL Slug', 'count')
+                        }
+                    ).reset_index()
+                else:
+                    culture_overview = pd.DataFrame(columns=['URL Slug', 'market language combination', 'Versions'])
+                    
+                culture_overview.to_excel(writer, sheet_name="Culture Overview", index=False)
+                
+                market_sum = df_export.groupby("Market").size().reset_index(name="Count")
+                cat_sum = df_export.groupby("Website Category").size().reset_index(name="Count")
+                
+                market_sum.to_excel(writer, sheet_name="Market_Summary", index=False)
+                cat_sum.to_excel(writer, sheet_name="Category_Summary", index=False)
+                
+            file_suffix = "All_Categories" if selected_cat == "All" else selected_cat.replace(" ", "_")
                 
             st.download_button(
                 label="Download Excel File",
-                data=st.session_state.sitemap_excel_buffer,
-                file_name="sitemap_extract.xlsx",
+                data=excel_buffer.getvalue(),
+                file_name=f"sitemap_extract_{file_suffix}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+            
+
 
     with tabs[1]:
         st.markdown("#### URL Classifier")
@@ -4930,24 +4981,36 @@ elif current_page == "Random Tools":
                 st.warning("Please provide valid URLs to classify.")
             else:
                 with st.spinner(f"Classifying {len(urls_to_process)} URLs..."):
+                    combos = [backend.extract_market_language_combination(u) for u in urls_to_process]
+                    slugs = [backend.extract_url_slug(u) for u in urls_to_process]
                     markets = [backend.categorize_market(u) for u in urls_to_process]
                     websites = [backend.categorize_website(u) for u in urls_to_process]
-                    languages = [backend.categorize_language(u) for u in urls_to_process]
+                    languages = [backend.extract_language_from_combination(c) for c in combos]
                     
                     # Ensure original columns are kept and new ones appended at the end
                     df_out = original_df.copy()
                     df_out["Market"] = markets
                     df_out["Website Category"] = websites
+                    df_out["market language combination"] = combos
                     df_out["Language"] = languages
+                    df_out["URL Slug"] = slugs
                     
                     summary_df = df_out.groupby("Market").size().reset_index(name="Count")
                     summary_category_df = df_out.groupby("Website Category").size().reset_index(name="Count")
                     summary_lang_df = df_out.groupby("Language").size().reset_index(name="Count")
                     
+                    culture_overview = df_out.groupby('URL Slug').agg(
+                        **{
+                            'market language combination': ('market language combination', lambda x: ', '.join(sorted(set(str(i) for i in x)))),
+                            'Versions': ('URL Slug', 'count')
+                        }
+                    ).reset_index()
+                    
                     import io
                     excel_buffer = io.BytesIO()
                     with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
                         df_out.to_excel(writer, sheet_name="Categorized_URLs", index=False)
+                        culture_overview.to_excel(writer, sheet_name="Culture Overview", index=False)
                         summary_lang_df.to_excel(writer, sheet_name="Language_Summary", index=False)
                         summary_df.to_excel(writer, sheet_name="Market_Summary", index=False)
                         summary_category_df.to_excel(writer, sheet_name="Category_Summary", index=False)

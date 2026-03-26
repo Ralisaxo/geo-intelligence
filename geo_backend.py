@@ -1919,7 +1919,7 @@ def fetch_unique_tags(brand_id, api_token):
 # -----------------------------------------------------------------------------
 # RANDOM TOOLS FUNCTIONS
 # -----------------------------------------------------------------------------
-def extract_all_sitemap_urls(sitemap_urls, progress_callback=None):
+def extract_all_sitemap_urls(sitemap_urls, progress_callback=None, error_callback=None):
     all_urls = []
     
     def crawl_sitemap(url):
@@ -1950,6 +1950,8 @@ def extract_all_sitemap_urls(sitemap_urls, progress_callback=None):
                     
         except Exception as e:
             print(f"Error fetching sitemap {url}: {e}")
+            if error_callback:
+                error_callback(url, str(e))
             
     for url in sitemap_urls:
         if url.strip():
@@ -2087,6 +2089,49 @@ def categorize_website(url):
         
     # 3. Fallback
     return "Other"
+
+def extract_market_language_combination(url):
+    u = url.lower()
+    if "bgsaxo.it" in u:
+        return "it-it"
+    
+    import urllib.parse
+    import re
+    parsed = urllib.parse.urlparse(u)
+    path = parsed.path
+    if path.startswith("/"):
+        parts = path.split("/")
+        if len(parts) > 1:
+            first_segment = parts[1]
+            if re.match(r'^[a-z]{2}-[a-z]{2,4}$', first_segment):
+                return first_segment
+    return "global"
+
+def extract_language_from_combination(combination):
+    if "-" in combination:
+        return combination.split("-")[0]
+    return combination
+
+def extract_url_slug(url):
+    u = url.lower()
+    import urllib.parse
+    import re
+    parsed = urllib.parse.urlparse(u)
+    path = parsed.path
+    
+    if "bgsaxo.it" in u:
+        return path if path else "/"
+        
+    if path.startswith("/"):
+        parts = path.split("/")
+        if len(parts) > 1:
+            first_segment = parts[1]
+            if re.match(r'^[a-z]{2}-[a-z]{2,4}$', first_segment):
+                slug = "/" + "/".join(parts[2:])
+                if slug == "//": return "/"
+                return slug
+                
+    return path if path else "/"
 
 def fetch_kpi_time_series(brand_id, tag, start_date, end_date, api_token):
     """
