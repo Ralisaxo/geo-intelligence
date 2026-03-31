@@ -2048,7 +2048,7 @@ elif current_page == "LLM Monitoring":
         "Saxo UK": 10000079
     }
 
-    tab_kpi, tab_comp_overview, tab_cross_market, tab_truth, tab_extract, tab_source_trends, tab_scraper = st.tabs(["📈 KPI Monitoring", "🏎️ Competitive Overview", "🌍 Cross Market Analysis", "🛡️ LLM Truth Control", "⛏️ Source Extraction", "📈 Source Trends", "🕵️‍♂️ Competitor Scraper"])
+    tab_kpi, tab_comp_overview, tab_cross_market, tab_truth, tab_extract, tab_source_trends, tab_scraper, tab_data_extractor = st.tabs(["📈 KPI Monitoring", "🏎️ Competitive Overview", "🌍 Cross Market Analysis", "🛡️ LLM Truth Control", "⛏️ Source Extraction", "📈 Source Trends", "🕵️‍♂️ Competitor Scraper", "📦 Data Extractor"])
 
     with tab_kpi:
         st.markdown("## 📈 KPI Monitoring")
@@ -4534,6 +4534,61 @@ elif current_page == "LLM Monitoring":
                     mime="text/csv",
                     key="scraper_download"
                 )
+
+    with tab_data_extractor:
+        st.markdown("## 📦 Data Extractor")
+        st.info("Select brands and download an Excel file with all prompts and tracked competitors.")
+        
+        with st.container(border=True):
+            st.markdown("### Select Brands")
+            cols = st.columns(4)
+            selected_brands_for_extract = []
+            
+            brand_items = list(ACCURANKER_BRANDS.keys())
+            for i, brand_name in enumerate(brand_items):
+                col = cols[i % 4]
+                default_val = brand_name not in ["GEO Experiments", "Saxo Institutional"]
+                with col:
+                    if st.checkbox(brand_name, value=default_val, key=f"data_extract_{brand_name}"):
+                        selected_brands_for_extract.append(brand_name)
+                        
+            st.markdown("---")
+            generate_excel_btn = st.button("📥 Generate Excel", type="primary", width="stretch", key="data_extract_btn")
+            
+        if generate_excel_btn:
+            accuranker_token = st.secrets.get("ACCURANKER_TOKEN")
+            if not accuranker_token:
+                st.error("Missing ACCURANKER_TOKEN in secrets.")
+            elif not selected_brands_for_extract:
+                st.error("Please select at least one brand.")
+            else:
+                selected_dict = {name: ACCURANKER_BRANDS[name] for name in selected_brands_for_extract}
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                def update_progress(pct, text):
+                    progress_bar.progress(min(pct, 1.0))
+                    status_text.text(text)
+                
+                excel_buffer = backend.generate_data_extractor_excel(
+                    selected_dict, accuranker_token, progress_callback=update_progress
+                )
+                
+                progress_bar.empty()
+                status_text.empty()
+                
+                st.session_state['data_extractor_excel'] = excel_buffer
+                st.success(f"Excel file generated for {len(selected_brands_for_extract)} brand(s).")
+        
+        if 'data_extractor_excel' in st.session_state and st.session_state['data_extractor_excel'] is not None:
+            st.download_button(
+                label="⬇️ Download Excel",
+                data=st.session_state['data_extractor_excel'],
+                file_name="AccuRanker_Data_Extract.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="data_extractor_download"
+            )
 
 # --- PAGE: AI POWERED TOOLS ---
 elif current_page == "AI Powered Tools":

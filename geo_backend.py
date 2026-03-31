@@ -2837,3 +2837,147 @@ def fetch_competitor_details(brand_id, api_token):
                         }
     
     return competitor_details
+
+
+def fetch_prompts_lightweight(brand_id, api_token):
+    """
+    Fetches unique prompts (id, prompt, description, tags) from AccuRanker.
+    Returns only prompt-level data without results to avoid duplicates per LLM engine.
+    """
+    if not brand_id or not api_token:
+        return []
+
+    url = f"https://app.accuranker.com/api/v4/brands/{brand_id}/prompts/"
+    headers = {
+        "Authorization": f"Token {api_token}",
+        "Accept": "application/json",
+    }
+
+    params = {
+        "fields": "id,prompt,description,tags",
+        "limit": 1000
+    }
+
+    prompts = []
+
+    try:
+        while url:
+            response = requests.get(url, headers=headers, params=params)
+            response.raise_for_status()
+            data = response.json()
+
+            chunk = []
+            if isinstance(data, list):
+                chunk = data
+                url = None
+            elif isinstance(data, dict):
+                chunk = data.get('results', [])
+                url = data.get('next')
+                if url:
+                    params = None
+
+            prompts.extend(chunk)
+
+            if len(prompts) > 10000:
+                break
+
+        return prompts
+
+    except Exception as e:
+        print(f"AccuRanker API Error (lightweight): {e}")
+        return prompts
+
+
+def generate_data_extractor_excel(brands_dict, api_token, progress_callback=None):
+    """
+    Generates an Excel file with two sheets:
+      - 'Prompts': Brand, Prompt, Description, Tags
+      - 'Competitors': Competitor Brand Name, Website URL, Alternative Spelling Versions
+
+    Args:
+        brands_dict: dict of {brand_name: brand_id} for selected brands
+        api_token: AccuRanker API token
+        progress_callback: optional callable(progress_float, status_text)
+
+    Returns:
+        BytesIO buffer containing the .xlsx file
+    """
+    import io
+
+    all_prompts_rows = []
+    all_competitors = {}  # name -> {domain, brand_list} — deduplicated across brands
+    comp_per_market_rows = []  # per-brand competitor rows
+    total_brands = len(brands_dict)
+
+    for idx, (brand_name, brand_id) in enumerate(brands_dict.items()):
+        if progress_callback:
+            progress_callback(
+                (idx / total_brands) * 0.9,
+                f"Fetching data for {brand_name}..."
+            )
+
+        # --- Prompts ---
+        raw_prompts = fetch_prompts_lightweight(brand_id, api_token)
+        seen_prompts = set()
+        for p in raw_prompts:
+            prompt_text = p.get('prompt', '')
+            if prompt_text in seen_prompts:
+                continue
+            seen_prompts.add(prompt_text)
+
+            tags = p.get('tags') or []
+            description = p.get('description') or ''
+            all_prompts_rows.append({
+                "Brand": brand_name,
+                "Prompt": prompt_text,
+                "Description": description,
+                "Tags": ", ".join(tags)
+            })
+
+        # --- Competitors ---
+        comp_details = fetch_competitor_details(brand_id, api_token)
+        for comp_name, details in comp_details.items():
+            domain = details.get("domain", "")
+            brand_list = details.get("brand_list", [])
+
+            # Per-market row
+            comp_per_market_rows.append({
+                "Brand": brand_name,
+                "Competitor Brand Name": comp_name,
+                "Website URL": domain,
+                "Alternative Spelling Versions": ", ".join(brand_list)
+            })
+
+            # Aggregated (deduplicated)
+            if comp_name not in all_competitors:
+                all_competitors[comp_name] = {
+                    "domain": domain,
+                    "brand_list": brand_list
+                }
+
+    # Build DataFrames
+    df_prompts = pd.DataFrame(all_prompts_rows, columns=["Brand", "Prompt", "Description", "Tags"])
+
+    comp_agg_rows = []
+    for comp_name, details in all_competitors.items():
+        comp_agg_rows.append({
+            "Competitor Brand Name": comp_name,
+            "Website URL": details.get("domain", ""),
+            "Alternative Spelling Versions": ", ".join(details.get("brand_list", []))
+        })
+    df_comp_aggregated = pd.DataFrame(comp_agg_rows, columns=["Competitor Brand Name", "Website URL", "Alternative Spelling Versions"])
+
+    df_comp_per_market = pd.DataFrame(comp_per_market_rows, columns=["Brand", "Competitor Brand Name", "Website URL", "Alternative Spelling Versions"])
+
+    # Write to Excel buffer
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df_prompts.to_excel(writer, sheet_name="Prompts", index=False)
+        df_comp_aggregated.to_excel(writer, sheet_name="Competitors Aggregated", index=False)
+        df_comp_per_market.to_excel(writer, sheet_name="Competitors per market", index=False)
+    buffer.seek(0)
+
+    if progress_callback:
+        progress_callback(1.0, "Excel file ready!")
+
+    return buffer
