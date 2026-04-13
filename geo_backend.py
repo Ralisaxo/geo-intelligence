@@ -1102,7 +1102,7 @@ def process_accuranker_prompts_for_reddit(prompts, tag_filter="Commercial"):
     matched_prompts = []
     total_tag_prompts = 0
     
-    tag_filter_lower = tag_filter.lower() if tag_filter else None
+    tag_filter_lower = tag_filter.lower() if tag_filter and tag_filter.lower() != "all tags" else None
     
     for p in prompts:
         # 1. Filter by Tag
@@ -1238,7 +1238,7 @@ def fetch_accuranker_data(brand_id, tag, api_token):
 
     # 2. Filter & Process
     verified_results = []
-    tag_lower = tag.lower() if tag else None
+    tag_lower = tag.lower() if tag and tag.lower() != "all tags" else None
     
     # Pre-process to identify all verification tasks
     verification_tasks = []
@@ -1350,6 +1350,8 @@ def fetch_accuranker_sources(brand_id, tag, start_date, end_date, api_token, cal
                     url = data.get('next')
                     if url: params = None
                 
+                for item in chunk:
+                    item['source_brand_id'] = b_id
                 all_prompts.extend(chunk)
                 
                 if len(all_prompts) > 10000: # Safety
@@ -1363,12 +1365,14 @@ def fetch_accuranker_sources(brand_id, tag, start_date, end_date, api_token, cal
         return pd.DataFrame()
 
     # Filter by tag and process sources
-    tag_lower = tag.lower() if tag else None
+    tag_lower = tag.lower() if tag and tag.lower() != "all tags" else None
     
     source_counts = {} # url -> total engine responses
     url_counts = {} # url -> count of prompts having AT LEAST ONE occurrence of this url
     domain_prompts = {} # domain -> total engine responses
     domain_counts = {} # domain -> count of promos having AT LEAST ONE url from this domain
+    url_markets = {} # url -> set of brand ids
+    domain_markets = {} # domain -> set of brand ids
     total_matching_prompts = 0
     
     for p in all_prompts:
@@ -1406,6 +1410,8 @@ def fetch_accuranker_sources(brand_id, tag, start_date, end_date, api_token, cal
                 if s_url:
                     urls_this_response.add(s_url)
                     unique_urls_in_prompt.add(s_url)
+                    if 'source_brand_id' in p:
+                        url_markets.setdefault(s_url, set()).add(p['source_brand_id'])
                     try:
                         parsed = urllib.parse.urlparse(s_url)
                         domain = parsed.netloc
@@ -1413,6 +1419,8 @@ def fetch_accuranker_sources(brand_id, tag, start_date, end_date, api_token, cal
                             domain = domain[4:]
                         domains_this_response.add(domain)
                         unique_domains_in_prompt.add(domain)
+                        if 'source_brand_id' in p:
+                            domain_markets.setdefault(domain, set()).add(p['source_brand_id'])
                     except Exception:
                         pass
             
@@ -1450,14 +1458,20 @@ def fetch_accuranker_sources(brand_id, tag, start_date, end_date, api_token, cal
         domain_pct = (domain_kw_count / total_matching_prompts * 100) if total_matching_prompts > 0 else 0
         domain_total_prompts = domain_prompts.get(domain, 0)
         
-        output_data.append({
+        row = {
             "Domain": domain,
             "Domain Cited (%)": domain_pct,
             "Domain Prompts": domain_total_prompts,
             "Full URL": url,
             "URL Cited (%)": url_pct,
             "Prompts": count
-        })
+        }
+        
+        if len(brand_ids) > 1:
+            row["Domain Markets Count"] = len(domain_markets.get(domain, set()))
+            row["URL Markets Count"] = len(url_markets.get(url, set()))
+            
+        output_data.append(row)
 
     df = pd.DataFrame(output_data)
     if not df.empty:
@@ -1675,7 +1689,7 @@ def fetch_source_trends(brand_id, tag, start_date, end_date, api_token):
     if not all_prompts:
         return pd.DataFrame()
 
-    tag_lower = tag.lower() if tag else None
+    tag_lower = tag.lower() if tag and tag.lower() != "all tags" else None
     
     daily_total_prompts = {} # engine -> date -> count of prompts evaluated on that date
     daily_domain_counts = {} # engine -> date -> {domain -> count of prompts citing domain on that date}
@@ -2180,7 +2194,7 @@ def fetch_kpi_time_series(brand_id, tag, start_date, end_date, api_token):
         print(f"API Error fetching KPI series: {e}")
         return pd.DataFrame(), pd.DataFrame()
 
-    tag_lower = tag.lower() if tag else None
+    tag_lower = tag.lower() if tag and tag.lower() != "all tags" else None
     
     data_by_date = {}
     unique_prompts = []
@@ -2323,7 +2337,7 @@ def fetch_competitive_overview(brand_id, brand_name, tag, start_date, end_date, 
         print(f"API Error fetching competitive overview: {e}")
         return pd.DataFrame()
 
-    tag_lower = tag.lower() if tag else None
+    tag_lower = tag.lower() if tag and tag.lower() != "all tags" else None
     data_by_date = {}
 
     for p in all_prompts:
@@ -2440,7 +2454,7 @@ def fetch_cross_market_data(brand_id, tag, start_date, end_date, api_token):
         print(f"API Error fetching cross market data: {e}")
         return {}
 
-    tag_lower = tag.lower() if tag else None
+    tag_lower = tag.lower() if tag and tag.lower() != "all tags" else None
     
     engine_aggs = {}
 
@@ -2981,3 +2995,157 @@ def generate_data_extractor_excel(brands_dict, api_token, progress_callback=None
         progress_callback(1.0, "Excel file ready!")
 
     return buffer
+
+def explore_query_fanout(prompt, model_choice, api_keys, force_search=False):
+    """
+    Sends the prompt to OpenAI or Gemini and extracts fan-out queries and cited sources.
+    model_choice should be from: 'gpt-4o', 'gpt-5', 'gemini-3-flash-preview', 'gemini-3.1-pro-preview'
+    Returns a dict:
+    {
+        "fan_out_queries": [], 
+        "sources": [{"title": "...", "url": "..."}],
+        "final_message": ""
+    }
+    """
+    results = {
+        "fan_out_queries": [],
+        "sources": [],
+        "final_message": ""
+    }
+    
+    if "gpt" in model_choice.lower():
+        openai_key = api_keys.get("openai")
+        if not openai_key:
+            raise ValueError("OpenAI API key missing")
+        
+        url = "https://api.openai.com/v1/responses"
+        headers = {
+            "Authorization": f"Bearer {openai_key}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": model_choice,
+            "input": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            "tools": [{"type": "web_search"}],
+            "include": ["web_search_call.action.sources"]
+        }
+        
+        if force_search:
+            payload["tool_choice"] = {"type": "web_search"}
+        else:
+            payload["tool_choice"] = "auto"
+        
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            
+            # Recursive extraction
+            sources_list = []
+            queries_list = []
+            
+            def recursive_search(obj):
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        if k in ["sources", "citations"] and isinstance(v, list):
+                            for s in v:
+                                if isinstance(s, dict) and ("url" in s or "uri" in s):
+                                    sources_list.append(s)
+                        if k == "queries" and isinstance(v, list):
+                            for q in v:
+                                if isinstance(q, dict) and "query" in q:
+                                    queries_list.append(q["query"])
+                                elif isinstance(q, str):
+                                    queries_list.append(q)
+                        recursive_search(v)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        recursive_search(item)
+            
+            recursive_search(data)
+            results["sources"] = sources_list
+            results["fan_out_queries"] = queries_list
+            
+            # Find final message robustly
+            longest_str = ''
+            def find_strings(obj):
+                nonlocal longest_str
+                if isinstance(obj, dict):
+                    if 'output' in obj and isinstance(obj['output'], dict):
+                        content = obj['output'].get('content')
+                        if isinstance(content, str):
+                            if len(content) > len(longest_str): longest_str = content
+                    for k, v in obj.items():
+                        if k in ['content', 'text'] and isinstance(v, str):
+                            if len(v) > len(longest_str):
+                                longest_str = v
+                        find_strings(v)
+                elif isinstance(obj, list):
+                    for item in obj:
+                        find_strings(item)
+                        
+            find_strings(data)
+            results["final_message"] = longest_str if longest_str else json.dumps(data)
+        except Exception as e:
+            results["final_message"] = f"Error calling OpenAI API: {e}"
+            
+    elif "gemini" in model_choice.lower():
+        google_key = api_keys.get("google")
+        if not google_key:
+             raise ValueError("Google API key missing")
+             
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_choice}:generateContent?key={google_key}"
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": prompt}]
+                }
+            ],
+            "tools": [{"googleSearch": {}}]
+        }
+        
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            data = response.json()
+            
+            final_msg = ""
+            candidates = data.get("candidates", [])
+            if candidates:
+                cand = candidates[0]
+                parts = cand.get("content", {}).get("parts", [])
+                for p in parts:
+                    final_msg += p.get("text", "")
+                    
+                grounding = cand.get("groundingMetadata", {})
+                web_grounding = grounding.get("groundingChunks", [])
+                for chunk in web_grounding:
+                    web = chunk.get("web", {})
+                    if web:
+                        results["sources"].append({
+                            "title": web.get("title", ""),
+                            "url": web.get("uri", "")
+                        })
+            results["final_message"] = final_msg
+        except Exception as e:
+            results["final_message"] = f"Error calling Gemini API: {e}"
+            
+    # Deduplicate sources by URL
+    seen_urls = set()
+    deduped = []
+    for s in results["sources"]:
+        u = s.get("url") or s.get("uri")
+        if u and u not in seen_urls:
+            seen_urls.add(u)
+            deduped.append({"title": s.get("title", "Untitled Source"), "url": u})
+    results["sources"] = deduped
+    
+    return results

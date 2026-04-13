@@ -2048,7 +2048,7 @@ elif current_page == "LLM Monitoring":
         "Saxo UK": 10000079
     }
 
-    tab_kpi, tab_comp_overview, tab_cross_market, tab_truth, tab_extract, tab_source_trends, tab_scraper, tab_data_extractor = st.tabs(["📈 KPI Monitoring", "🏎️ Competitive Overview", "🌍 Cross Market Analysis", "🛡️ LLM Truth Control", "⛏️ Source Extraction", "📈 Source Trends", "🕵️‍♂️ Competitor Scraper", "📦 Data Extractor"])
+    tab_kpi, tab_comp_overview, tab_cross_market, tab_truth, tab_extract, tab_source_trends, tab_scraper, tab_data_extractor, tab_fanout = st.tabs(["📈 KPI Monitoring", "🏎️ Competitive Overview", "🌍 Cross Market Analysis", "🛡️ LLM Truth Control", "⛏️ Source Extraction", "📈 Source Trends", "🕵️‍♂️ Competitor Scraper", "📦 Data Extractor", "🔍 Query Fanout Explorer"])
 
     with tab_kpi:
         st.markdown("## 📈 KPI Monitoring")
@@ -2079,7 +2079,7 @@ elif current_page == "LLM Monitoring":
                               st.session_state[kpi_cache_key] = {}
                 
                 tags_map = st.session_state.get(kpi_cache_key, {})
-                tag_options = [f"{t} ({c})" for t, c in tags_map.items()]
+                tag_options = ["ALL Tags"] + [f"{t} ({c})" for t, c in tags_map.items()]
                 
                 default_ix = 0
                 for i, opt in enumerate(tag_options):
@@ -2379,7 +2379,7 @@ elif current_page == "LLM Monitoring":
                           st.session_state[comp_cache_key] = {}
                           
                 tags_map = st.session_state.get(comp_cache_key, {})
-                tag_options = [f"{t} ({c})" for t, c in tags_map.items()]
+                tag_options = ["ALL Tags"] + [f"{t} ({c})" for t, c in tags_map.items()]
                 
                 default_ix = 0
                 for i, opt in enumerate(tag_options):
@@ -2728,7 +2728,7 @@ elif current_page == "LLM Monitoring":
                               st.session_state[cross_cache_key] = {}
                 
                 tags_map = st.session_state.get(cross_cache_key, {})
-                tag_options = [f"{t} ({c})" for t, c in tags_map.items()]
+                tag_options = ["ALL Tags"] + [f"{t} ({c})" for t, c in tags_map.items()]
                 
                 default_ix = 0
                 for i, opt in enumerate(tag_options):
@@ -2859,7 +2859,7 @@ elif current_page == "LLM Monitoring":
                 # Tags Dict: {TagName: Count}
                 tags_map = st.session_state.get(brand_cache_key, {})
                 # List for Dropdown: "Tag (Count)"
-                tag_options = [f"{t} ({c})" for t, c in tags_map.items()]
+                tag_options = ["ALL Tags"] + [f"{t} ({c})" for t, c in tags_map.items()]
             
                 # Find default index
                 default_ix = 0
@@ -3198,10 +3198,10 @@ elif current_page == "LLM Monitoring":
         with st.container(border=True):
             col_brand, col_tag, col_date = st.columns([1, 1, 1])
             with col_brand:
-                brand_options = ["All Brands (Excl. GEO/Inst)"] + list(ACCURANKER_BRANDS.keys())
+                brand_options = ["ALL (except Insti and Experiments)"] + list(ACCURANKER_BRANDS.keys())
                 ext_default_idx = brand_options.index("Saxo BE") if "Saxo BE" in brand_options else 1
                 ext_brand_name = st.selectbox("Select Brand", brand_options, index=ext_default_idx, key="ext_brand")
-                if ext_brand_name == "All Brands (Excl. GEO/Inst)":
+                if ext_brand_name == "ALL (except Insti and Experiments)":
                     ext_brand_id = [v for k, v in ACCURANKER_BRANDS.items() if k not in ["GEO Experiments", "Saxo Institutional"]]
                     tag_brand_id = ACCURANKER_BRANDS.get("Saxo DK", 10000087)
                 else:
@@ -3220,7 +3220,7 @@ elif current_page == "LLM Monitoring":
                               st.session_state[ext_cache_key] = {}
                 
                 tags_map = st.session_state.get(ext_cache_key, {})
-                tag_options = [f"{t} ({c})" for t, c in tags_map.items()]
+                tag_options = ["ALL Tags"] + [f"{t} ({c})" for t, c in tags_map.items()]
                 
                 default_ix = 0
                 for i, opt in enumerate(tag_options):
@@ -3396,6 +3396,7 @@ elif current_page == "LLM Monitoring":
                  column_config={
                      "Domain": st.column_config.TextColumn("Domain"),
                      "Domain Prompts": st.column_config.NumberColumn("Domain Prompts"),
+                     "Domain Markets Count": st.column_config.NumberColumn("Domain Markets"),
                      "Domain Cited (%)": st.column_config.ProgressColumn(
                          "Domain Cited (%)",
                          format="%.1f%%",
@@ -3404,6 +3405,7 @@ elif current_page == "LLM Monitoring":
                      ),
                      "Full URL": st.column_config.LinkColumn("Full URL"),
                      "Prompts": st.column_config.NumberColumn("URL Prompts"),
+                     "URL Markets Count": st.column_config.NumberColumn("URL Markets"),
                      "URL Cited (%)": st.column_config.ProgressColumn(
                          "URL Cited (%)",
                          format="%.1f%%",
@@ -3985,10 +3987,10 @@ elif current_page == "LLM Monitoring":
         with st.container(border=True):
             col_brand, col_comp, col_tag, col_date = st.columns([1, 1, 1, 1])
             with col_brand:
-                brand_options_trends = ["All Brands (Excl. GEO/Inst)"] + list(ACCURANKER_BRANDS.keys())
+                brand_options_trends = ["ALL (except Insti and Experiments)"] + list(ACCURANKER_BRANDS.keys())
                 trends_default_idx = brand_options_trends.index("Saxo BE") if "Saxo BE" in brand_options_trends else 1
                 trends_brand_name = st.selectbox("Select Brand", brand_options_trends, index=trends_default_idx, key="trends_brand")
-                if trends_brand_name == "All Brands (Excl. GEO/Inst)":
+                if trends_brand_name == "ALL (except Insti and Experiments)":
                     trends_brand_id = [v for k, v in ACCURANKER_BRANDS.items() if k not in ["GEO Experiments", "Saxo Institutional"]]
                     # Use Saxo DK for tag fetching as a fallback
                     tag_brand_id_trends = ACCURANKER_BRANDS.get("Saxo DK", 10000087)
@@ -4013,7 +4015,7 @@ elif current_page == "LLM Monitoring":
                               st.session_state[trends_cache_key] = {}
                 
                 tags_map = st.session_state.get(trends_cache_key, {})
-                tag_options = [f"{t} ({c})" for t, c in tags_map.items()]
+                tag_options = ["ALL Tags"] + [f"{t} ({c})" for t, c in tags_map.items()]
                 
                 default_ix = 0
                 for i, opt in enumerate(tag_options):
@@ -4408,7 +4410,7 @@ elif current_page == "LLM Monitoring":
                               st.session_state[scrap_cache_key] = {}
                 
                 tags_map = st.session_state.get(scrap_cache_key, {})
-                tag_options = [f"{t} ({c})" for t, c in tags_map.items()]
+                tag_options = ["ALL Tags"] + [f"{t} ({c})" for t, c in tags_map.items()]
                 
                 default_ix = 0
                 for i, opt in enumerate(tag_options):
@@ -4589,6 +4591,225 @@ elif current_page == "LLM Monitoring":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="data_extractor_download"
             )
+    with tab_fanout:
+        st.markdown("## 🔍 Query Fanout Explorer")
+        st.info("Test custom or tracked prompts against OpenAI and Google Gemini models to visualize search grounding and final responses.")
+        
+        with st.container(border=True):
+            fanout_input_method = st.radio("Input Method", ["Custom Prompt", "From AccuRanker Setup"], index=0, horizontal=True)
+            
+            fanout_custom_prompt = ""
+            if fanout_input_method == "From AccuRanker Setup":
+                col_b, col_t, col_p = st.columns([1, 1, 2])
+                with col_b:
+                    f_brand_list = list(ACCURANKER_BRANDS.keys())
+                    f_default_idx = f_brand_list.index("Saxo BE") if "Saxo BE" in f_brand_list else 0
+                    f_brand_name = st.selectbox("Select Brand", f_brand_list, index=f_default_idx, key="fanout_brand")
+                    f_brand_id = ACCURANKER_BRANDS[f_brand_name]
+                
+                with col_t:
+                    accuranker_token = st.secrets.get("ACCURANKER_TOKEN")
+                    f_cache_key = f"tags_{f_brand_id}"
+                    if f_cache_key not in st.session_state:
+                         with st.spinner("Loading Tags..."):
+                              if accuranker_token:
+                                  st.session_state[f_cache_key] = backend.fetch_unique_tags(f_brand_id, accuranker_token)
+                              else:
+                                  st.session_state[f_cache_key] = {}
+                    
+                    tags_map = st.session_state.get(f_cache_key, {})
+                    tag_options = ["ALL Tags"] + [f"{t} ({c})" for t, c in tags_map.items()]
+                    f_tag_str = st.selectbox("Tag Filter", tag_options, key="fanout_tag") if tag_options else st.text_input("Tag Filter", value="Commercial")
+                    f_tag_clean = f_tag_str.split(" (")[0] if " (" in str(f_tag_str) else f_tag_str
+                
+                with col_p:
+                    if not accuranker_token:
+                        st.error("Missing ACCURANKER_TOKEN in secrets.")
+                        tracked_prompts = []
+                    else:
+                        with st.spinner("Loading Prompts..."):
+                            raw_p = backend.fetch_prompts_lightweight(f_brand_id, accuranker_token)
+                            if f_tag_clean != "ALL Tags":
+                                tracked_prompts = [p.get("prompt", "") for p in raw_p if f_tag_clean.lower() in [t.lower() for t in (p.get("tags") or [])]]
+                            else:
+                                tracked_prompts = [p.get("prompt", "") for p in raw_p]
+                            
+                            tracked_prompts = sorted(list(set(tracked_prompts)))
+                            
+                    f_selected_prompt = st.selectbox("Select Prompt", tracked_prompts, key="fanout_tracked_prompt") if tracked_prompts else ""
+                    
+                fanout_custom_prompt = st.text_area("Prompt Output (Editable)", value=f_selected_prompt, height=100)
+            else:
+                fanout_custom_prompt = st.text_area("Enter your prompt", height=100)
+                
+            f_model_options = ["gpt-5.4", "gpt-5.3-mini", "gpt-5.3", "gpt-5.2", "gpt-5", "gpt-4o"]
+            f_model = st.selectbox("Choose Model", f_model_options, key="fanout_model")
+            fanout_force_search = st.checkbox("Force Web Search", value=False, help="Forces the model to use the web search tool instead of allowing it to auto-decide.")
+            
+            if st.button("Explore Query Fanout", type="primary", use_container_width=True):
+                if not fanout_custom_prompt:
+                    st.error("Please provide a prompt.")
+                else:
+                    with st.spinner(f"Querying {f_model}..."):
+                        g_keys = {
+                            "openai": st.secrets.get("OPENAI_API_KEY"),
+                            "google": st.secrets.get("GOOGLE_KG_API_KEY") or st.secrets.get("GEMINI_API_KEY")
+                        }
+                        try:
+                            results = backend.explore_query_fanout(fanout_custom_prompt, f_model, g_keys, force_search=fanout_force_search)
+                            results['run_model'] = f_model
+                            st.session_state['fanout_results'] = results
+                        except Exception as e:
+                            st.error(f"Error executing API call: {e}")
+                            
+        if 'fanout_results' in st.session_state:
+            res = st.session_state['fanout_results']
+            run_model = res.get('run_model', f_model)
+            
+            st.markdown("### Results")
+            fan_out_queries = res.get("fan_out_queries", [])
+            sources = res.get("sources", [])
+            final_msg = res.get("final_message", "")
+            
+            owned_searches = sum(1 for q in fan_out_queries if str(q).lower().strip().startswith("site:home.saxo"))
+            owned_domains = sum(1 for s in sources if "home.saxo" in str(s.get("url", "")).lower())
+            
+            # Styled horizontal metrics menu into prominent boxes
+            f_queries_count = len(fan_out_queries) if "gpt" in run_model.lower() else "N/A"
+            
+            st.markdown(f"""
+            <div style="display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap;">
+                <div style="flex: 1; min-width: 180px; padding: 16px; border-radius: 8px; border: 1px solid #444; background-color: #1e1e1e; text-align: center;">
+                    <div style="font-size: 28px; font-weight: bold; color: orange;">⚡ {f_queries_count}</div>
+                    <div style="font-size: 14px; font-weight: 600; color: #ccc;">FAN-OUT QUERIES</div>
+                </div>
+                <div style="flex: 1; min-width: 180px; padding: 16px; border-radius: 8px; border: 1px solid #444; background-color: #1e1e1e; text-align: center;">
+                    <div style="font-size: 28px; font-weight: bold; color: #3498db;">🌐 {len(sources)}</div>
+                    <div style="font-size: 14px; font-weight: 600; color: #ccc;">SOURCES</div>
+                </div>
+                <div style="flex: 1; min-width: 180px; padding: 16px; border-radius: 8px; border: 1px solid #444; background-color: #1e1e1e; text-align: center;">
+                    <div style="font-size: 28px; font-weight: bold; color: #2ecc71;">🟢 {owned_searches}</div>
+                    <div style="font-size: 14px; font-weight: 600; color: #ccc;">OWNED SITE SEARCHES</div>
+                </div>
+                <div style="flex: 1; min-width: 180px; padding: 16px; border-radius: 8px; border: 1px solid #444; background-color: #1e1e1e; text-align: center;">
+                    <div style="font-size: 28px; font-weight: bold; color: #95a5a6;">🔗 {owned_domains}</div>
+                    <div style="font-size: 14px; font-weight: 600; color: #ccc;">OWNED DOMAINS CITED</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            col_left, col_right = st.columns(2)
+            with col_left:
+                st.markdown("##### FAN-OUT QUERIES")
+                if "gemini" in run_model.lower():
+                    st.caption("Gemini architecture utilizes integrated Google Search grounding. Immediate string recursive queries are not exposed.")
+                else:
+                    if fan_out_queries:
+                        for i, q in enumerate(fan_out_queries):
+                            q_str = str(q)
+                            bg_color = "rgba(46, 204, 113, 0.1)" if q_str.lower().strip().startswith("site:home.saxo") else "transparent"
+                            border_color = "#2ecc71" if q_str.lower().strip().startswith("site:home.saxo") else "#444"
+                            text_color = "#2ecc71" if q_str.lower().strip().startswith("site:home.saxo") else "white"
+                            num_str = f"{i+1:02d}"
+                            
+                            st.markdown(f"""
+                            <div style="border: 1px solid {border_color}; border-radius: 8px; padding: 12px; margin-bottom: 8px; background-color: {bg_color}; display: flex; align-items: center; justify-content: space-between;">
+                                <div style="display: flex; align-items: center; gap: 12px; font-family: monospace;">
+                                    <span style="color: #9b59b6; font-weight: bold;">{num_str}</span>
+                                    <span style="color: {text_color}; font-weight: 600;">{q_str}</span>
+                                </div>
+                                <span style="color: #666;">📄</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        st.info("No fan-out queries generated.")
+                        
+            with col_right:
+                st.markdown(f"##### SOURCES ({len(sources)})")
+                if sources:
+                    with st.expander(f"View {len(sources)} Sources", expanded=True):
+                        # Determine if we can build a 2-column grid safely
+                        for i in range(0, len(sources), 2):
+                            scol1, scol2 = st.columns(2)
+                            
+                            def format_source_box(s):
+                                title = s.get("title", "Untitled").replace('"', '&quot;')
+                                url = s.get("url", "#")
+                                domain = url.split("//")[-1].split("/")[0] if "//" in url else url
+                                is_owned = "home.saxo" in url.lower()
+                                title_col = "#2ecc71"
+                                bg_color = "rgba(46, 204, 113, 0.1)" if is_owned else "transparent"
+                                border_color = "#2ecc71" if is_owned else "#333"
+                                icon = "🟢" if is_owned else "🌐"
+                                
+                                return f"""
+                                <a href="{url}" target="_blank" style="text-decoration: none;">
+                                    <div style="border: 1px solid {border_color}; border-radius: 8px; padding: 10px; margin-bottom: 8px; background-color: {bg_color}; display: flex; justify-content: space-between; align-items: center; cursor: pointer;">
+                                        <div style="display: flex; align-items: center; gap: 8px; overflow: hidden;">
+                                            <span style="color: {title_col}; font-size: 14px;">{icon}</span>
+                                            <span style="color: {title_col}; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px;" title="{title}">{domain}</span>
+                                        </div>
+                                        <span style="color: #666; font-size: 14px;">↗</span>
+                                    </div>
+                                </a>
+                                """
+                            
+                            scol1.markdown(format_source_box(sources[i]), unsafe_allow_html=True)
+                            if i + 1 < len(sources):
+                                scol2.markdown(format_source_box(sources[i+1]), unsafe_allow_html=True)
+                else:
+                    st.info("No sources explicitly cited.")
+                    
+            st.markdown("##### Final Response")
+            if isinstance(final_msg, dict):
+                 st.json(final_msg)
+            else:
+                 msg_str = str(final_msg).strip()
+                 if msg_str.startswith("{") and msg_str.endswith("}"):
+                     try:
+                         parsed = json.loads(msg_str)
+                         st.json(parsed)
+                     except:
+                         st.info(msg_str)
+                 else:
+                     st.info(msg_str)
+            
+            st.markdown("---")
+            st.markdown("#### Export Results")
+            
+            f_csv_col1, f_csv_col2 = st.columns([2, 1])
+            with f_csv_col1:
+                f_csv_format = st.selectbox(
+                    "CSV Export Format",
+                    ["Standard CSV (, separator, . decimal)", "EU Excel Ready (; separator, , decimal)"],
+                    key="fanout_csv_format"
+                )
+            with f_csv_col2:
+                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                
+                rows = []
+                for q in fan_out_queries:
+                    rows.append({"Type": "Query", "Content": str(q), "URL": ""})
+                for s in sources:
+                    rows.append({"Type": "Source", "Content": s.get("title", ""), "URL": s.get("url", "")})
+                rows.append({"Type": "Final Message", "Content": final_msg, "URL": ""})
+                
+                df_export = pd.DataFrame(rows)
+                
+                if "EU Excel" in f_csv_format:
+                    for col in df_export.select_dtypes(include=['float64', 'float32']).columns:
+                        df_export[col] = df_export[col].apply(lambda x: str(x).replace('.', ','))
+                    csv_bytes = df_export.to_csv(index=False, sep=';').encode('utf-8')
+                else:
+                    csv_bytes = df_export.to_csv(index=False).encode('utf-8')
+                    
+                st.download_button(
+                    label="⬇️ Download Export",
+                    data=csv_bytes,
+                    file_name="Fanout_Results.csv",
+                    mime="text/csv",
+                    key="fanout_download"
+                )
 
 # --- PAGE: AI POWERED TOOLS ---
 elif current_page == "AI Powered Tools":
