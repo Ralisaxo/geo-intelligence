@@ -2048,7 +2048,7 @@ elif current_page == "LLM Monitoring":
         "Saxo UK": 10000079
     }
 
-    tab_kpi, tab_comp_overview, tab_cross_market, tab_truth, tab_extract, tab_source_trends, tab_scraper, tab_data_extractor, tab_fanout = st.tabs(["📈 KPI Monitoring", "🏎️ Competitive Overview", "🌍 Cross Market Analysis", "🛡️ LLM Truth Control", "⛏️ Source Extraction", "📈 Source Trends", "🕵️‍♂️ Competitor Scraper", "📦 Data Extractor", "🔍 Query Fanout Explorer"])
+    tab_kpi, tab_comp_overview, tab_cross_market, tab_truth, tab_extract, tab_source_trends, tab_scraper, tab_data_extractor, tab_fanout, tab_youtube_analysis = st.tabs(["📈 KPI Monitoring", "🏎️ Competitive Overview", "🌍 Cross Market Analysis", "🛡️ LLM Truth Control", "⛏️ Source Extraction", "📈 Source Trends", "🕵️‍♂️ Competitor Scraper", "📦 Data Extractor", "🔍 Query Fanout Explorer", "📺 YouTube Analysis"])
 
     with tab_kpi:
         st.markdown("## 📈 KPI Monitoring")
@@ -4810,6 +4810,593 @@ elif current_page == "LLM Monitoring":
                     mime="text/csv",
                     key="fanout_download"
                 )
+
+    with tab_youtube_analysis:
+        st.markdown("## 📺 YouTube Analysis")
+        st.info("Extract and aggregate YouTube sources cited by AI engines for a specific brand and tag, and fetch their metadata.")
+        
+        with st.container(border=True):
+            col_brand, col_tag, col_date = st.columns([1, 1, 1])
+            with col_brand:
+                brand_options = ["ALL (except Insti and Experiments)"] + list(ACCURANKER_BRANDS.keys())
+                yt_default_idx = brand_options.index("Saxo BE") if "Saxo BE" in brand_options else 1
+                yt_brand_name = st.selectbox("Select Brand", brand_options, index=yt_default_idx, key="yt_brand")
+                if yt_brand_name == "ALL (except Insti and Experiments)":
+                    yt_brand_id = [v for k, v in ACCURANKER_BRANDS.items() if k not in ["GEO Experiments", "Saxo Institutional"]]
+                    tag_brand_id = ACCURANKER_BRANDS.get("Saxo DK", 10000087)
+                else:
+                    yt_brand_id = ACCURANKER_BRANDS[yt_brand_name]
+                    tag_brand_id = yt_brand_id
+                
+            with col_tag:
+                accuranker_token = st.secrets.get("ACCURANKER_TOKEN")
+                yt_cache_key = f"tags_{tag_brand_id}"
+                
+                if yt_cache_key not in st.session_state:
+                     with st.spinner("Loading Tags..."):
+                          if accuranker_token:
+                              st.session_state[yt_cache_key] = backend.fetch_unique_tags(tag_brand_id, accuranker_token)
+                          else:
+                              st.session_state[yt_cache_key] = {}
+                
+                tags_map = st.session_state.get(yt_cache_key, {})
+                tag_options = ["ALL Tags"] + [f"{t} ({c})" for t, c in tags_map.items()]
+                
+                default_ix = 0
+                for i, opt in enumerate(tag_options):
+                    if "Commercial" in opt:
+                        default_ix = i
+                        break
+                    
+                yt_tag_str = st.selectbox("Tag Filter", tag_options, index=default_ix, key="yt_tag") if tag_options else st.text_input("Tag Filter (No tags found)", value="Commercial", key="yt_tag_fallback")
+                yt_tag_clean = yt_tag_str.split(" (")[0] if " (" in str(yt_tag_str) else yt_tag_str
+                
+            with col_date:
+                from datetime import datetime, timedelta
+                six_months_ago = datetime.today() - timedelta(days=180)
+                date_range = st.date_input("Date Range", value=(six_months_ago, datetime.today()), max_value=datetime.today(), key="yt_date_range")
+                
+        # Filters and Button
+        col_filters, col_btn = st.columns([2, 1])
+        with col_filters:
+            calc_latest_only = st.checkbox("Calculate using Latest Snapshot only", value=True, help="Aligns with AccuRanker UI. Uncheck to include all snapshots in the date range.", key="yt_latest_only")
+        
+        with col_btn:
+             st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+             fetch_yt_btn = st.button("Fetch YouTube Sources", type="primary", width="stretch", key="yt_fetch_btn")
+             
+        if fetch_yt_btn:
+             if len(date_range) != 2:
+                 st.error("Please select both a start and end date.")
+             elif not accuranker_token:
+                 st.error("Missing ACCURANKER_TOKEN in secrets.")
+             else:
+                 start_date, end_date = date_range
+                 with st.spinner(f"Fetching YouTube sources for {yt_brand_name}..."):
+                     df_sources = backend.fetch_accuranker_sources(
+                         yt_brand_id,
+                         yt_tag_clean,
+                         start_date,
+                         end_date,
+                         accuranker_token,
+                         calculate_latest_only=calc_latest_only
+                     )
+                     
+                     if df_sources.empty:
+                         st.warning("No sources found for the selected criteria.")
+                         st.session_state.yt_extraction_df = None
+                     else:
+                         # Filter to only youtube.com and youtu.be
+                         df_yt = df_sources[df_sources['Domain'].str.contains('youtube.com|youtu.be', case=False, na=False)].copy()
+                         
+                         if df_yt.empty:
+                             st.warning("No YouTube sources found.")
+                             st.session_state.yt_extraction_df = None
+                         else:
+                             st.session_state.yt_extraction_df = df_yt
+                             if "yt_enriched_df" in st.session_state:
+                                 del st.session_state["yt_enriched_df"]
+
+        if 'yt_extraction_df' in st.session_state and st.session_state.yt_extraction_df is not None:
+             df_disp = st.session_state.yt_extraction_df
+             
+             unique_vids = df_disp['Full URL'].nunique()
+             st.success(f"Extracted {unique_vids} unique YouTube URLs.")
+             
+             st.markdown("---")
+             st.markdown("### YouTube Data Fetcher")
+             
+             if st.button("Pull data", type="primary", key="yt_pull_data_btn"):
+                 yt_api_key = st.secrets.get("YOUTUBE_API_KEY")
+                 if not yt_api_key:
+                     st.error("Missing YOUTUBE_API_KEY in secrets.")
+                 else:
+                     import urllib.parse
+                     import requests
+                     
+                     df_enriched = df_disp.copy()
+                     df_enriched["Video Title"] = ""
+                     df_enriched["Channel Name"] = ""
+                     df_enriched["Description"] = ""
+                     df_enriched["Saxo Mention"] = "No"
+                     df_enriched["Competitors Mentioned"] = ""
+                     df_enriched["Video Views"] = ""
+                     df_enriched["Channel Subscribers"] = ""
+                     df_enriched["Channel ID"] = ""
+                     df_enriched["Channel Thumbnail"] = ""
+
+                     prog_bar = st.progress(0, text="Fetching metadata from YouTube APIs...")
+                     total_urls = len(df_enriched)
+                     
+                     if isinstance(yt_brand_id, list):
+                         acc_comps_dict = {}
+                         for b_id in yt_brand_id:
+                             b_cache_key = f"comps_{b_id}"
+                             if b_cache_key not in st.session_state:
+                                 st.session_state[b_cache_key] = backend.fetch_competitor_details(b_id, accuranker_token)
+                             for k, v in st.session_state[b_cache_key].items():
+                                 if k not in acc_comps_dict:
+                                     acc_comps_dict[k] = []
+                                 acc_comps_dict[k].extend(v)
+                         # Deduplicate aliases
+                         for k in acc_comps_dict:
+                             acc_comps_dict[k] = list(set(acc_comps_dict[k]))
+                     else:
+                         comp_cache_key = f"comps_{yt_brand_id}"
+                         if comp_cache_key not in st.session_state:
+                             st.session_state[comp_cache_key] = backend.fetch_competitor_details(yt_brand_id, accuranker_token)
+                         acc_comps_dict = st.session_state.get(comp_cache_key, {})
+
+                     # Remove own brand from competitors list to avoid charting it twice
+                     keys_to_remove = []
+                     for c_name in acc_comps_dict.keys():
+                         if "saxo" in c_name.lower():
+                             keys_to_remove.append(c_name)
+                     for k in keys_to_remove:
+                         del acc_comps_dict[k]
+
+                     comp_aliases = {}
+                     for c_name, aliases in acc_comps_dict.items():
+                         comp_aliases[c_name] = [a.lower() for a in aliases]
+                     
+                     saxo_aliases = ["saxo", "saxobank", "saxoinvestor", "saxotrader", "saxotradego", "saxotraderpro"]
+                     if isinstance(yt_brand_id, int):
+                         pass
+                     
+                     import re
+                     
+                     video_id_to_indices = {}
+                     for i, row in df_enriched.iterrows():
+                         url = row["Full URL"]
+                         match = re.search(r"^(?:.*(?:youtu\.be/|v/|u/\w/|embed/|shorts/|watch\?v=|\&v=))([^#\&\?]*).*", url)
+                         video_id = match.group(1) if match and len(match.group(1)) == 11 else None
+                         
+                         if video_id:
+                             if video_id not in video_id_to_indices:
+                                 video_id_to_indices[video_id] = []
+                             video_id_to_indices[video_id].append(i)
+                         else:
+                             df_enriched.at[i, "Video Title"] = "Invalid URL"
+
+                     video_ids = list(video_id_to_indices.keys())
+                     chunk_size = 50
+                     
+                     processed_count = 0
+                     if len(video_ids) == 0:
+                         prog_bar.progress(1.0, text="No valid YouTube IDs found.")
+                         
+                     for chunk_start in range(0, len(video_ids), chunk_size):
+                         chunk = video_ids[chunk_start:chunk_start + chunk_size]
+                         ids_str = ",".join(chunk)
+                         api_url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet,statistics&id={ids_str}&key={yt_api_key}"
+                         
+                         try:
+                             res = requests.get(api_url)
+                             data = res.json()
+                             
+                             found_ids = set()
+                             if "items" in data:
+                                 for item in data["items"]:
+                                     vid = item.get("id")
+                                     if not vid: continue
+                                     found_ids.add(vid)
+                                     
+                                     snippet = item.get("snippet", {})
+                                     stats = item.get("statistics", {})
+                                     title = snippet.get("title", "")
+                                     channel = snippet.get("channelTitle", "")
+                                     channel_id = snippet.get("channelId", "")
+                                     views = stats.get("viewCount", "0")
+                                     desc = snippet.get("description", "")
+                                     desc_lower = desc.lower()
+                                     
+                                     mentioned_saxo = False
+                                     for sa in saxo_aliases:
+                                         if re.search(rf"\b{re.escape(sa)}\b", desc_lower):
+                                             mentioned_saxo = True
+                                             break
+                                             
+                                     mentioned_comps = []
+                                     for c_name, aliases in comp_aliases.items():
+                                         for a in set(aliases + [c_name.lower()]):
+                                             if re.search(rf"\b{re.escape(a)}\b", desc_lower):
+                                                 mentioned_comps.append(c_name)
+                                                 break
+                                                 
+                                     for idx in video_id_to_indices.get(vid, []):
+                                         df_enriched.at[idx, "Video Title"] = title
+                                         df_enriched.at[idx, "Channel Name"] = channel
+                                         df_enriched.at[idx, "Description"] = desc
+                                         df_enriched.at[idx, "Saxo Mention"] = "Yes" if mentioned_saxo else "No"
+                                         df_enriched.at[idx, "Competitors Mentioned"] = ", ".join(mentioned_comps)
+                                         df_enriched.at[idx, "Video Views"] = views
+                                         df_enriched.at[idx, "Channel ID"] = channel_id
+                                         
+                             # Mark not found IDs
+                             missing_ids = set(chunk) - found_ids
+                             for missing_vid in missing_ids:
+                                 for idx in video_id_to_indices.get(missing_vid, []):
+                                     df_enriched.at[idx, "Video Title"] = "Video not found / Private"
+                                         
+                         except Exception as e:
+                             for vid in chunk:
+                                 for idx in video_id_to_indices.get(vid, []):
+                                     df_enriched.at[idx, "Video Title"] = f"API Error: {str(e)}"
+                                     
+                         processed_count += len(chunk)
+                         prog_pct = processed_count / len(video_ids) if len(video_ids) > 0 else 1.0
+                         prog_bar.progress(prog_pct, text=f"Fetching metadata from YouTube APIs... ({processed_count}/{len(video_ids)})")
+
+                     # Channels Processing Batch Loop
+                     channel_ids = list(set([cid for cid in df_enriched["Channel ID"].tolist() if str(cid).strip()]))
+                     chan_chunk_size = 50
+                     processed_chan = 0
+                     
+                     if len(channel_ids) > 0:
+                         prog_bar.progress(0.0, text=f"Fetching channel details... (0/{len(channel_ids)})")
+                         
+                     for chan_start in range(0, len(channel_ids), chan_chunk_size):
+                         c_chunk = channel_ids[chan_start:chan_start + chan_chunk_size]
+                         c_ids_str = ",".join(c_chunk)
+                         c_api_url = f"https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&id={c_ids_str}&key={yt_api_key}"
+                         
+                         try:
+                             c_res = requests.get(c_api_url)
+                             c_data = c_res.json()
+                             
+                             if "items" in c_data:
+                                 for c_item in c_data["items"]:
+                                     cid = c_item.get("id")
+                                     c_stats = c_item.get("statistics", {})
+                                     c_snippet = c_item.get("snippet", {})
+                                     
+                                     subs = c_stats.get("subscriberCount", "0")
+                                     thumb = c_snippet.get("thumbnails", {}).get("high", {}).get("url", "")
+                                     if not thumb:
+                                         thumb = c_snippet.get("thumbnails", {}).get("default", {}).get("url", "")
+                                         
+                                     match_idxs = df_enriched.index[df_enriched["Channel ID"] == cid].tolist()
+                                     for m_idx in match_idxs:
+                                         df_enriched.at[m_idx, "Channel Subscribers"] = subs
+                                         df_enriched.at[m_idx, "Channel Thumbnail"] = thumb
+                                         
+                         except Exception as e:
+                             pass
+                                 
+                         processed_chan += len(c_chunk)
+                         prog_pct = (processed_chan / len(channel_ids)) if len(channel_ids) > 0 else 1.0
+                         prog_bar.progress(prog_pct, text=f"Fetching channel details... ({processed_chan}/{len(channel_ids)})")
+                     
+                     prog_bar.empty()
+                     st.session_state.yt_enriched_df = df_enriched
+                     st.success("YouTube Data Pulled successfully!")
+             
+             display_df = st.session_state.get("yt_enriched_df", df_disp)
+             
+             # -----------------------------------------------------------------
+             # VISUALIZATIONS (only when pull data was executed)
+             # -----------------------------------------------------------------
+             if "Saxo Mention" in display_df.columns:
+                 import plotly.express as px
+
+                 st.markdown("---")
+                 st.subheader("📊 Brand Mention Analysis")
+
+                 df_viz = display_df.copy()
+
+                 if df_viz.empty:
+                     st.warning("No data to visualize. Try pulling data first.")
+                 else:
+                     # --- ROW 0: Top 10 Channels Visual ---
+                     if "Channel ID" in df_viz.columns and "URL Cited (%)" in df_viz.columns:
+                         st.markdown("#### 🌟 Top 10 Most Influential Channels")
+                         st.caption("The top 10 YouTube channels driving the highest AI visibility share natively.")
+                         
+                         df_viz_chan = df_viz[df_viz["Channel ID"].str.strip() != ""].copy()
+                         agg_df = df_viz_chan.groupby("Channel ID").agg(
+                             Channel_Name=("Channel Name", "first"),
+                             Channel_Subscribers=("Channel Subscribers", "first"),
+                             Channel_Thumbnail=("Channel Thumbnail", "first"),
+                             Weighted_Score=("URL Cited (%)", "sum"),
+                             Saxo_Matches=("Saxo Mention", lambda x: list(x))
+                         ).reset_index()
+                         
+                         agg_df["Subscribers_Int"] = pd.to_numeric(agg_df["Channel_Subscribers"].replace("", "0").fillna("0"), errors='coerce').fillna(0)
+                         top_10_df = agg_df.sort_values(by="Weighted_Score", ascending=False).head(10)
+                         
+                         html_cards = []
+                         
+                         for _, row in top_10_df.iterrows():
+                             name = row["Channel_Name"]
+                             ch_id = row["Channel ID"]
+                             subs = row["Subscribers_Int"]
+                             thumb = row["Channel_Thumbnail"]
+                             score = row["Weighted_Score"]
+                             has_saxo = "Yes" in row["Saxo_Matches"]
+                             
+                             if subs >= 1000000:
+                                 subs_str = f"{subs/1000000:.1f}M"
+                             elif subs >= 1000:
+                                 subs_str = f"{subs/1000:.1f}K"
+                             else:
+                                 subs_str = str(int(subs))
+                                 
+                             score_str = f"{score:.2f}"
+                             
+                             indicator_html = '<div style="background-color: #2ecc71; color: white; border-radius: 4px; padding: 2px 6px; font-size: 0.7em; font-weight: bold; margin-top: 5px;">✅ Saxo Mentioned</div>' if has_saxo else ''
+                             img_src = thumb if str(thumb).startswith("http") else "https://via.placeholder.com/70?text=YT"
+                             channel_url = f"https://www.youtube.com/channel/{ch_id}" if ch_id else "#"
+                             
+                             import html as html_mod
+                             safe_name = html_mod.escape(str(name))
+                             fallback_name = safe_name.replace(' ', '+')[:10]
+                             
+                             html_cards.append({
+                                 "name": safe_name,
+                                 "subs_str": subs_str,
+                                 "score_str": score_str,
+                                 "indicator_html": indicator_html,
+                                 "img_src": img_src,
+                                 "channel_url": channel_url,
+                                 "fallback_name": fallback_name
+                             })
+                         
+                         # Render in rows of 5 using st.columns
+                         for row_start in range(0, len(html_cards), 5):
+                             row_cards = html_cards[row_start:row_start + 5]
+                             cols = st.columns(5)
+                             for ci, card in enumerate(row_cards):
+                                 with cols[ci]:
+                                     card_html = f'''
+                                     <div style="background-color: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 15px; display: flex; flex-direction: column; align-items: center; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); min-height: 220px;">
+                                         <img src="{card['img_src']}" referrerpolicy="no-referrer" onerror="this.onerror=null;this.src='https://ui-avatars.com/api/?name={card['fallback_name']}&amp;background=333&amp;color=fff&amp;size=70&amp;rounded=true'" style="width: 70px; height: 70px; border-radius: 50%; object-fit: cover; margin-bottom: 10px; border: 2px solid rgba(255,255,255,0.2);">
+                                         <a href="{card['channel_url']}" target="_blank" style="font-size: 1.05em; font-weight: 700; color: #fff; margin-bottom: 4px; line-height: 1.2; word-break: break-word; text-decoration: none;">{card['name']}</a>
+                                         <div style="font-size: 0.8em; color: #aaa; margin-bottom: 8px;">{card['subs_str']} Subscribers</div>
+                                         <div style="font-size: 0.75em; color: #888; margin-bottom: 2px;">Visibility Score</div>
+                                         <div style="font-size: 1.3em; font-weight: 800; color: #e74c3c;">{card['score_str']}</div>
+                                         {card['indicator_html']}
+                                     </div>
+                                     '''
+                                     st.markdown(card_html, unsafe_allow_html=True)
+
+                     # --- ROW 1: Pie Charts ---
+                     st.markdown("#### Distribution of Saxo Mentions")
+                     st.caption("Visualizes the proportion of YouTube videos that mention the Saxo brand in their description.")
+                     col_pie1, col_pie2 = st.columns(2)
+
+                     color_map = {
+                         "Yes": "#2ecc71",
+                         "No": "#e74c3c"
+                     }
+
+                     with col_pie1:
+                         count_df = df_viz["Saxo Mention"].value_counts().reset_index()
+                         count_df.columns = ["Status", "Count"]
+                         fig_pie_count = px.pie(
+                             count_df,
+                             names="Status",
+                             values="Count",
+                             title="By URL Count (Raw)",
+                             color="Status",
+                             color_discrete_map=color_map
+                         )
+                         fig_pie_count.update_layout(margin=dict(t=40, b=0, l=0, r=0))
+                         st.plotly_chart(fig_pie_count, width="stretch")
+
+                     with col_pie2:
+                         if "URL Cited (%)" in df_viz.columns:
+                             weighted_df = df_viz.groupby("Saxo Mention")["URL Cited (%)"].sum().reset_index()
+                             weighted_df.columns = ["Status", "Visibility Share"]
+                             fig_pie_weighted = px.pie(
+                                 weighted_df,
+                                 names="Status",
+                                 values="Visibility Share",
+                                 title="By AI Visibility Share (Weighted)",
+                                 color="Status",
+                                 color_discrete_map=color_map
+                             )
+                             fig_pie_weighted.update_layout(margin=dict(t=40, b=0, l=0, r=0))
+                             st.plotly_chart(fig_pie_weighted, width="stretch")
+                         else:
+                             st.info("URL Cited (%) not available for weighted analysis.")
+
+                     # --- ROW 1.5: Share of Market Voice ---
+                     st.markdown("#### Share of Market Voice")
+                     st.caption("Aggregates your main brand against recorded mentions of any tracked competitor in the YouTube descriptions.")
+                     
+                     brand_counts = []
+                     
+                     if not df_viz.empty:
+                         # Saxo calculations
+                         brand_yes_mask = df_viz["Saxo Mention"] == "Yes"
+                         raw_brand_count = brand_yes_mask.sum()
+                         weighted_brand_score = df_viz.loc[brand_yes_mask, "URL Cited (%)"].sum() if "URL Cited (%)" in df_viz.columns else 0
+                         
+                         main_brand_disp = yt_brand_name.split()[0] if yt_brand_name != "ALL (except Insti and Experiments)" else "Saxo"
+                         if raw_brand_count > 0:
+                             brand_counts.append({"Brand": main_brand_disp, "Raw Count": raw_brand_count, "Weighted Score": weighted_brand_score, "Type": "Main Brand"})
+                             
+                         # Competitor calculations
+                         comps_df = df_viz[["Competitors Mentioned", "URL Cited (%)"]].dropna(subset=["Competitors Mentioned"])
+                         comps_exploded = comps_df.assign(
+                             Competitor=comps_df["Competitors Mentioned"].str.split(", ")
+                         ).explode("Competitor")
+                         
+                         comps_exploded = comps_exploded[comps_exploded["Competitor"].str.strip() != ""]
+                         
+                         if not comps_exploded.empty:
+                             if "URL Cited (%)" in comps_exploded.columns:
+                                 comp_stats = comps_exploded.groupby("Competitor").agg(
+                                     Raw_Count=("Competitor", "count"),
+                                     Weighted_Score=("URL Cited (%)", "sum")
+                                 ).reset_index()
+                             else:
+                                 comp_stats = comps_exploded.groupby("Competitor").agg(
+                                     Raw_Count=("Competitor", "count")
+                                 ).reset_index()
+                                 comp_stats["Weighted_Score"] = 0
+                                 
+                             for _, row in comp_stats.iterrows():
+                                 brand_counts.append({
+                                     "Brand": row["Competitor"],
+                                     "Raw Count": row["Raw_Count"],
+                                     "Weighted Score": row["Weighted_Score"],
+                                     "Type": "Competitor"
+                                 })
+                                 
+                         sov_df = pd.DataFrame(brand_counts)
+                         
+                         if not sov_df.empty:
+                             sov_df_raw = sov_df.sort_values(by="Raw Count", ascending=True)
+                             fig_sov_raw = px.bar(
+                                 sov_df_raw,
+                                 x="Raw Count",
+                                 y="Brand",
+                                 orientation='h',
+                                 color="Type",
+                                 color_discrete_map={"Main Brand": "#2ecc71", "Competitor": "#e74c3c"},
+                                 title="Total Market Voice (By Mentions Count)"
+                             )
+                             fig_sov_raw.update_layout(margin=dict(t=40, b=0), height=400, showlegend=False, yaxis={'categoryorder':'total ascending'})
+                             
+                             sov_df_weight = sov_df.sort_values(by="Weighted Score", ascending=True)
+                             fig_sov_weight = px.bar(
+                                 sov_df_weight,
+                                 x="Weighted Score",
+                                 y="Brand",
+                                 orientation='h',
+                                 color="Type",
+                                 color_discrete_map={"Main Brand": "#2ecc71", "Competitor": "#e74c3c"},
+                                 title="Total Market Voice (By Weighted Visibility %)"
+                             )
+                             fig_sov_weight.update_layout(margin=dict(t=40, b=0), height=400, showlegend=False, yaxis={'categoryorder':'total ascending'})
+                             
+                             col_sov1, col_sov2 = st.columns(2)
+                             with col_sov1:
+                                 st.plotly_chart(fig_sov_raw, width="stretch")
+                             with col_sov2:
+                                 st.plotly_chart(fig_sov_weight, width="stretch")
+
+                     # --- ROW 2: Channel Name Usage ---
+                     st.markdown("#### Channel Targeting Opportunities")
+                     st.caption("Aggregates the total visibility footprint of specific YouTube channels driving engine citations.")
+                     
+                     if not df_viz.empty and "Channel Name" in df_viz.columns:
+                         chan_df = df_viz.copy()
+                         chan_df = chan_df[chan_df["Channel Name"].str.strip() != ""]
+                         
+                         if not chan_df.empty:
+                             if "URL Cited (%)" in chan_df.columns:
+                                 chan_stats = chan_df.groupby("Channel Name").agg(
+                                     Raw_Count=("Channel Name", "count"),
+                                     Weighted_Score=("URL Cited (%)", "sum")
+                                 ).reset_index()
+                             else:
+                                 chan_stats = chan_df.groupby("Channel Name").agg(
+                                     Raw_Count=("Channel Name", "count")
+                                 ).reset_index()
+                                 chan_stats["Weighted_Score"] = 0
+                                 
+                             chan_raw_top = chan_stats.sort_values(by="Raw_Count", ascending=False).head(30).sort_values(by="Raw_Count", ascending=True)
+                             chan_weight_top = chan_stats.sort_values(by="Weighted_Score", ascending=False).head(30).sort_values(by="Weighted_Score", ascending=True)
+                             
+                             fig_chan_raw = px.bar(
+                                 chan_raw_top,
+                                 x="Raw_Count",
+                                 y="Channel Name",
+                                 orientation='h',
+                                 color_discrete_sequence=["#3498db"],
+                                 title="Top Channels (By Video Mentions Count)"
+                             )
+                             fig_chan_raw.update_layout(margin=dict(t=40, b=0), height=500, yaxis={'categoryorder':'total ascending'})
+                             
+                             fig_chan_weight = px.bar(
+                                 chan_weight_top,
+                                 x="Weighted_Score",
+                                 y="Channel Name",
+                                 orientation='h',
+                                 color_discrete_sequence=["#9b59b6"],
+                                 title="Top Channels (By Weighted Visibility %)"
+                             )
+                             fig_chan_weight.update_layout(margin=dict(t=40, b=0), height=500, yaxis={'categoryorder':'total ascending'})
+                             
+                             col_chan1, col_chan2 = st.columns(2)
+                             with col_chan1:
+                                 st.plotly_chart(fig_chan_raw, width="stretch")
+                             with col_chan2:
+                                 st.plotly_chart(fig_chan_weight, width="stretch")
+
+                 st.markdown("---")
+
+             col_dl1, col_dl2 = st.columns([1, 2])
+             with col_dl1:
+                 csv_format = st.selectbox(
+                     "CSV Export Format", 
+                     ["Standard CSV (, separator, . decimal)", "EU Excel Ready (; separator, , decimal)"], 
+                     key="csv_format_yt_analysis",
+                     label_visibility="collapsed"
+                 )
+             
+             if "EU Excel" in csv_format:
+                 df_csv = display_df.copy()
+                 for col in df_csv.select_dtypes(include=['float64', 'float32']).columns:
+                     df_csv[col] = df_csv[col].apply(lambda x: str(x).replace('.', ','))
+                 csv = df_csv.to_csv(index=False, sep=';').encode('utf-8')
+             else:
+                 csv = display_df.to_csv(index=False).encode('utf-8')
+             
+             with col_dl2:
+                 st.download_button(
+                     label="⬇️ Download CSV",
+                     data=csv,
+                     file_name=f"{yt_brand_name.replace(' ', '_')}_{yt_tag_clean.replace(' ', '_')}_YouTube_Analysis.csv",
+                     mime="text/csv",
+                     key="yt_download_btn"
+                 )
+             
+             cols_to_show = ["Video Title", "Channel Name", "Channel Subscribers", "Full URL", "Video Views", "URL Cited (%)", "Description", "URL Markets Count", "Saxo Mention", "Competitors Mentioned"]
+             actual_cols = [c for c in cols_to_show if c in display_df.columns]
+             
+             st.dataframe(
+                 display_df,
+                 column_order=actual_cols,
+                 column_config={
+                     "Domain": None,
+                     "Domain Prompts": None,
+                     "Domain Markets Count": None,
+                     "Domain Cited (%)": None,
+                     "Prompts": None,
+                     "Full URL": st.column_config.LinkColumn("Full URL"),
+                     "Video Title": st.column_config.TextColumn("Video Title"),
+                     "Channel Name": st.column_config.TextColumn("Channel Name"),
+                     "Description": st.column_config.TextColumn("Description"),
+                     "Saxo Mention": st.column_config.TextColumn("Saxo Mention"),
+                     "Competitors Mentioned": st.column_config.TextColumn("Competitors Mentioned"),
+                 },
+                 hide_index=True,
+                 width="stretch",
+                 height=600
+             )
 
 # --- PAGE: AI POWERED TOOLS ---
 elif current_page == "AI Powered Tools":
