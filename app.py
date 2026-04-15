@@ -5100,7 +5100,7 @@ elif current_page == "LLM Monitoring":
                  import plotly.express as px
 
                  st.markdown("---")
-                 st.subheader("📊 Brand Mention Analysis")
+                 st.subheader(f"📊 Brand Mention Analysis — {yt_brand_name}")
 
                  df_viz = display_df.copy()
 
