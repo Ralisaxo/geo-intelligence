@@ -4052,7 +4052,7 @@ elif current_page == "LLM Monitoring":
              else:
                  start_date, end_date = trends_date_range
                  with st.spinner(f"Fetching source trends..."):
-                     df_primary = backend.fetch_source_trends(
+                     df_primary, df_primary_urls = backend.fetch_source_trends(
                          trends_brand_id,
                          trends_tag_clean,
                          start_date,
@@ -4063,11 +4063,14 @@ elif current_page == "LLM Monitoring":
                      if not df_primary.empty:
                          if trends_comp_id:
                              df_primary['Domain'] = df_primary['Domain'] + f" ({trends_brand_name})"
+                             if not df_primary_urls.empty:
+                                 df_primary_urls['Full URL'] = df_primary_urls['Full URL'] + f" ({trends_brand_name})"
                              
                          df_final = df_primary
+                         df_final_urls = df_primary_urls
                          
                          if trends_comp_id:
-                             df_comp = backend.fetch_source_trends(
+                             df_comp, df_comp_urls = backend.fetch_source_trends(
                                  trends_comp_id,
                                  trends_tag_clean,
                                  start_date,
@@ -4077,12 +4080,17 @@ elif current_page == "LLM Monitoring":
                              if not df_comp.empty:
                                  df_comp['Domain'] = df_comp['Domain'] + f" ({trends_comp_name})"
                                  df_final = pd.concat([df_primary, df_comp], ignore_index=True)
+                                 if not df_comp_urls.empty:
+                                     df_comp_urls['Full URL'] = df_comp_urls['Full URL'] + f" ({trends_comp_name})"
+                                     df_final_urls = pd.concat([df_primary_urls, df_comp_urls], ignore_index=True)
                                  
                          st.session_state.source_trends_df = df_final
+                         st.session_state.source_trends_url_df = df_final_urls
                          st.success(f"Successfully fetched trend data for {len(df_final['Domain'].unique())} unique domains.")
                      else:
                          st.warning("No trend data found for the selected criteria.")
                          st.session_state.source_trends_df = None
+                         st.session_state.source_trends_url_df = None
                          
         if 'source_trends_df' in st.session_state and st.session_state.source_trends_df is not None:
              df_trends = st.session_state.source_trends_df.copy()
@@ -4344,6 +4352,247 @@ elif current_page == "LLM Monitoring":
                              else:
                                  st.info("No losers found in this period.")
                                  
+                     # --- SOURCE VELOCITY ---
+                     st.markdown("---")
+                     if st.button("📈 Measure Source Velocity", key="btn_velocity"):
+                         st.session_state['show_velocity'] = True
+                     
+                     if st.session_state.get('show_velocity', False):
+                         import plotly.express as px
+                         import plotly.graph_objects as go
+                         
+                         entity_choice = st.radio("Analyze by:", ["Domain Level", "URL Level"], horizontal=True, key="velocity_entity")
+                         
+                         with st.spinner("Calculating temporal volatility..."):
+                             if entity_choice == "Domain Level":
+                                 velocity_results = backend.calculate_source_velocity(
+                                     df_movers_base,
+                                     entity_col='Domain',
+                                     citation_col='Domain Cited (%)',
+                                     prompts_col='Domain Prompts'
+                                 )
+                             else:
+                                 # URL-level analysis
+                                 url_df = st.session_state.get('source_trends_url_df', None)
+                                 if url_df is not None and not url_df.empty:
+                                     velocity_results = backend.calculate_source_velocity(
+                                         url_df,
+                                         entity_col='Full URL',
+                                         citation_col='URL Cited (%)',
+                                         prompts_col='URL Prompts'
+                                     )
+                                 else:
+                                     st.warning("No URL-level data available. Please re-fetch the trends data.")
+                                     velocity_results = None
+                         
+                         if velocity_results:
+                             vel_idx = velocity_results['velocity_index']
+                             stability_df = velocity_results['stability_df']
+                             volatility_df = velocity_results['volatility_df']
+                             
+                             # --- Top-Level Metrics ---
+                             entity_label = "Domain" if entity_choice == "Domain Level" else "URL"
+                             
+                             # Always compute domain-level stability for Saxo metric
+                             dom_velocity_for_saxo = backend.calculate_source_velocity(
+                                 df_movers_base,
+                                 entity_col='Domain',
+                                 citation_col='Domain Cited (%)',
+                                 prompts_col='Domain Prompts'
+                             )
+                             saxo_stab = dom_velocity_for_saxo['stability_df']
+                             saxo_domains = saxo_stab[saxo_stab['Entity'].str.contains('home.saxo|help.saxo', case=False, na=False)] if not saxo_stab.empty else pd.DataFrame()
+                             
+                             if not saxo_domains.empty:
+                                 # Use the top-performing matching domain rather than the mean to avoid dilution by minor subdomains
+                                 best_saxo = saxo_domains.loc[(saxo_domains['Presence Rate (%)'] * saxo_domains['Avg Citation (%)']).idxmax()]
+                                 saxo_presence = best_saxo['Presence Rate (%)']
+                                 saxo_citation = best_saxo['Avg Citation (%)']
+                                 saxo_label = f"{saxo_presence:.1f}% present · {saxo_citation:.2f}% avg citation"
+                             else:
+                                 saxo_label = "Not found"
+                             
+                             met_col1, met_col2 = st.columns(2)
+                             with met_col1:
+                                 st.metric(f"Market Velocity Index ({entity_label})", f"{vel_idx:.1f} / 100")
+                             with met_col2:
+                                 st.metric("Saxo as Source (Domain Level)", saxo_label)
+                             
+                             st.info("💡 **How to read this:** A score of 0 means perfect stability (the exact same sources appear every day). A score of 100 means total chaos (the AI completely replaces all sources every 24 hours).")
+                             
+                             # Helper: highlight Saxo rows green
+                             def highlight_saxo(row):
+                                 entity_val = str(row.get('Entity', ''))
+                                 if 'home.saxo' in entity_val.lower() or 'help.saxo' in entity_val.lower():
+                                     return ['background-color: #1b4332; color: #95d5b2'] * len(row)
+                                 return [''] * len(row)
+                             
+                             # --- Top 10 Most Stable & Cited (always both Domain + URL) ---
+                             st.markdown("#### 🏅 Most Stable & Cited Sources")
+                             st.caption("Ranked by a composite score of **Presence Rate × Avg Citation %**, highlighting sources the AI consistently trusts and gives meaningful visibility.")
+                             
+                             col_top_dom, col_top_url = st.columns(2)
+                             
+                             with col_top_dom:
+                                 # Domain-level top 10
+                                 dom_stab = dom_velocity_for_saxo['stability_df']
+                                 if not dom_stab.empty:
+                                     dom_stab['Score'] = dom_stab['Presence Rate (%)'] * dom_stab['Avg Citation (%)'] / 100
+                                     top10_dom = dom_stab.nlargest(10, 'Score')[['Entity', 'Presence Rate (%)', 'Avg Citation (%)', 'Total Prompts', 'Score']].reset_index(drop=True)
+                                     top10_dom.index = top10_dom.index + 1
+                                     st.markdown("**Top 10 Domains**")
+                                     styled_dom = top10_dom.style.apply(highlight_saxo, axis=1).format({
+                                         'Presence Rate (%)': '{:.1f}%',
+                                         'Avg Citation (%)': '{:.2f}%',
+                                         'Score': '{:.2f}'
+                                     })
+                                     st.dataframe(styled_dom, use_container_width=True, hide_index=False)
+                                 else:
+                                     st.info("No domain stability data available.")
+                             
+                             with col_top_url:
+                                 # URL-level top 10
+                                 url_df_vel = st.session_state.get('source_trends_url_df', None)
+                                 if url_df_vel is not None and not url_df_vel.empty:
+                                     url_velocity = backend.calculate_source_velocity(
+                                         url_df_vel,
+                                         entity_col='Full URL',
+                                         citation_col='URL Cited (%)',
+                                         prompts_col='URL Prompts'
+                                     )
+                                     url_stab = url_velocity['stability_df']
+                                     if not url_stab.empty:
+                                         url_stab['Score'] = url_stab['Presence Rate (%)'] * url_stab['Avg Citation (%)'] / 100
+                                         top10_url = url_stab.nlargest(10, 'Score')[['Entity', 'Presence Rate (%)', 'Avg Citation (%)', 'Total Prompts', 'Score']].reset_index(drop=True)
+                                         top10_url.index = top10_url.index + 1
+                                         st.markdown("**Top 10 URLs**")
+                                         styled_url = top10_url.style.apply(highlight_saxo, axis=1).format({
+                                             'Presence Rate (%)': '{:.1f}%',
+                                             'Avg Citation (%)': '{:.2f}%',
+                                             'Score': '{:.2f}'
+                                         })
+                                         st.dataframe(styled_url, use_container_width=True, hide_index=False)
+                                     else:
+                                         st.info("No URL stability data available.")
+                                 else:
+                                     st.info("No URL-level data available. Re-fetch trends to populate.")
+                             
+                             # --- Row 1: Daily Source Volatility (Stacked Area) ---
+                             st.markdown("#### Daily Source Volatility")
+                             if not volatility_df.empty:
+                                 vol_melt = volatility_df.melt(id_vars='Date', value_vars=['Retained', 'New'], var_name='Status', value_name='Citation Share')
+                                 fig_vol = px.area(
+                                     vol_melt,
+                                     x='Date',
+                                     y='Citation Share',
+                                     color='Status',
+                                     color_discrete_map={'Retained': '#2ecc71', 'New': '#e74c3c'},
+                                     title="Daily Source Volatility (Retained vs New Citations)"
+                                 )
+                                 fig_vol.update_layout(
+                                     xaxis_title="Date",
+                                     yaxis_title="Sum of Citation Share (%)",
+                                     hovermode="x unified",
+                                     height=400,
+                                     margin=dict(t=40, b=20)
+                                 )
+                                 st.plotly_chart(fig_vol, use_container_width=True)
+                                 st.caption("Shows the daily makeup of AI citations. Large spikes in the **'New'** category indicate that the AI algorithm shifted or hallucinated a completely new set of sources that day.")
+                             
+                             # --- Row 2: Stability vs Impact Matrix (Scatter) ---
+                             st.markdown("#### Stability vs. Impact Matrix")
+                             if not stability_df.empty:
+                                 # Filter to top 150 entities by volume
+                                 top_stability = stability_df.nlargest(150, 'Total Prompts')
+                                 
+                                 fig_scatter = px.scatter(
+                                     top_stability,
+                                     x='Presence Rate (%)',
+                                     y='Avg Citation (%)',
+                                     size='Total Prompts',
+                                     hover_name='Entity',
+                                     color='Presence Rate (%)',
+                                     color_continuous_scale='Viridis',
+                                     title=f"Stability vs. Impact Matrix (Top 150 {entity_label}s by Volume)",
+                                     size_max=40
+                                 )
+                                 fig_scatter.update_layout(
+                                     xaxis_title="Presence Rate (% of days active)",
+                                     yaxis_title="Avg Citation (% when active)",
+                                     height=500,
+                                     margin=dict(t=40, b=20)
+                                 )
+                                 st.plotly_chart(fig_scatter, use_container_width=True)
+                                 st.caption("Maps how long a source survives vs. how much share of voice it gets. **Top-Right:** Core Authorities (always cited, high impact). **Top-Left:** Viral Spikes (rarely cited, but dominate when active). **Bottom-Right:** Background Noise (always there, low impact).")
+                             
+                             # --- Row 3: Citation Lifespan Heatmap ---
+                             st.markdown("#### Citation Lifespan Heatmap")
+                             if not stability_df.empty:
+                                 # Get top 40 entities by volume
+                                 top40 = stability_df.nlargest(40, 'Total Prompts')['Entity'].tolist()
+                                 
+                                 # Prepare heatmap data from the raw base data
+                                 if entity_choice == "Domain Level":
+                                     hm_base = df_movers_base[df_movers_base['Domain'].isin(top40)].copy()
+                                     hm_base['Entity'] = hm_base['Domain']
+                                     hm_base['Citation'] = hm_base['Domain Cited (%)']
+                                 else:
+                                     url_df_hm = st.session_state.get('source_trends_url_df', pd.DataFrame())
+                                     if not url_df_hm.empty:
+                                         url_agg = url_df_hm[url_df_hm['Engine'] == 'Aggregated']
+                                         hm_base = url_agg[url_agg['Full URL'].isin(top40)].copy()
+                                         hm_base['Entity'] = hm_base['Full URL']
+                                         hm_base['Citation'] = hm_base['URL Cited (%)']
+                                     else:
+                                         hm_base = pd.DataFrame()
+                                 
+                                 if not hm_base.empty:
+                                     hm_base['Date'] = pd.to_datetime(hm_base['Date'])
+                                     heatmap_pivot = hm_base.pivot_table(
+                                         index='Entity',
+                                         columns='Date',
+                                         values='Citation',
+                                         aggfunc='mean'
+                                     ).fillna(0)
+                                     
+                                     # Sort entities by total citation (most active at top)
+                                     heatmap_pivot = heatmap_pivot.loc[heatmap_pivot.sum(axis=1).sort_values(ascending=True).index]
+                                     
+                                     # Truncate long entity names for display
+                                     display_labels = [e[:60] + '...' if len(str(e)) > 60 else str(e) for e in heatmap_pivot.index]
+                                     
+                                     fig_hm = go.Figure(data=go.Heatmap(
+                                         z=heatmap_pivot.values,
+                                         x=[d.strftime('%Y-%m-%d') for d in heatmap_pivot.columns],
+                                         y=display_labels,
+                                         colorscale=[
+                                             [0, '#1a1a2e'],
+                                             [0.01, '#16213e'],
+                                             [0.1, '#0f3460'],
+                                             [0.3, '#e94560'],
+                                             [0.6, '#f5a623'],
+                                             [1.0, '#f7dc6f']
+                                         ],
+                                         colorbar=dict(title="Citation %"),
+                                         hovertemplate='%{y}<br>Date: %{x}<br>Citation: %{z:.2f}%<extra></extra>'
+                                     ))
+                                     fig_hm.update_layout(
+                                         title=f"Citation Lifespan (Top 40 {entity_label}s by Volume)",
+                                         xaxis_title="Date",
+                                         yaxis_title=entity_label,
+                                         height=max(500, len(top40) * 18),
+                                         margin=dict(t=40, b=20, l=250),
+                                         plot_bgcolor='#1a1a2e',
+                                         paper_bgcolor='#0e0e1a',
+                                         font=dict(color='#e0e0e0')
+                                     )
+                                     st.plotly_chart(fig_hm, use_container_width=True)
+                                     st.caption("A micro-level view of source lifespans. A solid horizontal line means an **'Evergreen'** source that the AI trusts daily. Broken dots indicate fleeting sources that the AI tests and quickly drops.")
+                                 else:
+                                     st.info("Not enough data to render heatmap.")
+                             
+                             st.markdown("---")
+                     
                      st.markdown("#### Full Movers Data")
                      
                      # Checkbox to toggle full list vs top 100

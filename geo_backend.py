@@ -1693,6 +1693,7 @@ def fetch_source_trends(brand_id, tag, start_date, end_date, api_token):
     
     daily_total_prompts = {} # engine -> date -> count of prompts evaluated on that date
     daily_domain_counts = {} # engine -> date -> {domain -> count of prompts citing domain on that date}
+    daily_url_counts = {} # engine -> date -> {url -> count of prompts citing url on that date}
     
     for p in all_prompts:
         p_tags = [t.lower() for t in (p.get('tags') or [])]
@@ -1725,14 +1726,18 @@ def fetch_source_trends(brand_id, tag, start_date, end_date, api_token):
                 daily_total_prompts.setdefault(eng, {}).setdefault(current_date, 0)
                 daily_total_prompts[eng][current_date] += 1
                 
-            # Now domains
+            # Now domains and URLs
             unique_domains_agg = set()
             unique_domains_eng = {} # eng -> set of domains
+            unique_urls_agg = set()
+            unique_urls_eng = {} # eng -> set of urls
             
             for r in date_results:
                 eng = r.get('search_engine') or r.get('engine', 'Unknown')
                 if eng not in unique_domains_eng:
                     unique_domains_eng[eng] = set()
+                if eng not in unique_urls_eng:
+                    unique_urls_eng[eng] = set()
                     
                 sources = r.get('sources', [])
                 for s in sources:
@@ -1745,10 +1750,12 @@ def fetch_source_trends(brand_id, tag, start_date, end_date, api_token):
                                 domain = domain[4:]
                             unique_domains_agg.add(domain)
                             unique_domains_eng[eng].add(domain)
+                            unique_urls_agg.add(s_url)
+                            unique_urls_eng[eng].add(s_url)
                         except Exception:
                             pass
                             
-            # Save counts
+            # Save domain counts
             daily_domain_counts.setdefault("Aggregated", {}).setdefault(current_date, {})
             for d in unique_domains_agg:
                 daily_domain_counts["Aggregated"][current_date][d] = daily_domain_counts["Aggregated"][current_date].get(d, 0) + 1
@@ -1758,7 +1765,17 @@ def fetch_source_trends(brand_id, tag, start_date, end_date, api_token):
                 for d in doms:
                     daily_domain_counts[eng][current_date][d] = daily_domain_counts[eng][current_date].get(d, 0) + 1
 
-    # Format output
+            # Save URL counts
+            daily_url_counts.setdefault("Aggregated", {}).setdefault(current_date, {})
+            for u in unique_urls_agg:
+                daily_url_counts["Aggregated"][current_date][u] = daily_url_counts["Aggregated"][current_date].get(u, 0) + 1
+                
+            for eng, urls in unique_urls_eng.items():
+                daily_url_counts.setdefault(eng, {}).setdefault(current_date, {})
+                for u in urls:
+                    daily_url_counts[eng][current_date][u] = daily_url_counts[eng][current_date].get(u, 0) + 1
+
+    # Format domain-level output
     output_data = []
     
     for engine, engine_dates in daily_domain_counts.items():
@@ -1779,10 +1796,141 @@ def fetch_source_trends(brand_id, tag, start_date, end_date, api_token):
 
     df = pd.DataFrame(output_data)
     if not df.empty:
-        # Convert Date to datetime for proper sorting but keep as string if we want it to be compatible with Altair date stuff out of the box, or Altair handles datetime
-        # Let's keep Date as strings (YYYY-MM-DD), Altair parses them nicely as 'Date:T'. Time-series chart works best when we use Date objects or strings that Altair maps directly.
         df = df.sort_values(by=["Date", "Domain Cited (%)"], ascending=[True, False]).reset_index(drop=True)
-    return df
+
+    # Format URL-level output
+    url_output_data = []
+    
+    for engine, engine_dates in daily_url_counts.items():
+        for date_str, urls in engine_dates.items():
+            total_prompts_on_date = daily_total_prompts.get(engine, {}).get(date_str, 0)
+            
+            for url, count in urls.items():
+                pct = (count / total_prompts_on_date * 100) if total_prompts_on_date > 0 else 0
+                
+                url_output_data.append({
+                    "Engine": engine,
+                    "Date": date_str,
+                    "Full URL": url,
+                    "URL Prompts": count,
+                    "Total Prompts": total_prompts_on_date,
+                    "URL Cited (%)": pct
+                })
+
+    url_df = pd.DataFrame(url_output_data)
+    if not url_df.empty:
+        url_df = url_df.sort_values(by=["Date", "URL Cited (%)"], ascending=[True, False]).reset_index(drop=True)
+
+    return df, url_df
+
+
+def calculate_source_velocity(trend_data_df, entity_col='Domain', citation_col='Domain Cited (%)', prompts_col='Domain Prompts'):
+    """
+    Calculates Source Velocity metrics for temporal volatility analysis.
+    
+    Args:
+        trend_data_df: DataFrame with Date, entity column, citation %, prompts, and Engine columns.
+        entity_col: Column name to group by ('Domain' or 'Full URL').
+        citation_col: Column name for citation percentage.
+        prompts_col: Column name for prompt counts.
+    
+    Returns:
+        dict with keys: velocity_index, stability_df, volatility_df
+    """
+    df = trend_data_df.copy()
+    df['Date'] = pd.to_datetime(df['Date'])
+    
+    # Only use Aggregated engine data
+    if 'Engine' in df.columns:
+        df = df[df['Engine'] == 'Aggregated']
+    
+    if df.empty:
+        return {'velocity_index': 0, 'stability_df': pd.DataFrame(), 'volatility_df': pd.DataFrame()}
+    
+    dates = sorted(df['Date'].unique())
+    
+    if len(dates) < 2:
+        return {'velocity_index': 0, 'stability_df': pd.DataFrame(), 'volatility_df': pd.DataFrame()}
+    
+    # --- Metric 1: Velocity Index (Jaccard Distance) ---
+    daily_churn = []
+    prev_entities = None
+    
+    for date in dates:
+        day_data = df[df['Date'] == date]
+        active = set(day_data[day_data[citation_col] > 0][entity_col].unique())
+        
+        if prev_entities is not None and len(active | prev_entities) > 0:
+            new_entities = active - prev_entities
+            dropped_entities = prev_entities - active
+            total_unique = active | prev_entities
+            churn = (len(new_entities) + len(dropped_entities)) / len(total_unique)
+            daily_churn.append(churn)
+        
+        prev_entities = active
+    
+    velocity_index = (sum(daily_churn) / len(daily_churn) * 100) if daily_churn else 0
+    
+    # --- Metric 2: Stability vs Impact ---
+    total_days = len(dates)
+    entities = df[entity_col].unique()
+    
+    stability_data = []
+    for entity in entities:
+        entity_data = df[df[entity_col] == entity]
+        active_days = entity_data[entity_data[citation_col] > 0]
+        
+        presence_rate = (len(active_days['Date'].unique()) / total_days) * 100
+        avg_citation = active_days[citation_col].mean() if not active_days.empty else 0
+        total_prompts = entity_data[prompts_col].sum()
+        
+        stability_data.append({
+            'Entity': entity,
+            'Presence Rate (%)': round(presence_rate, 2),
+            'Avg Citation (%)': round(avg_citation, 2),
+            'Total Prompts': int(total_prompts)
+        })
+    
+    stability_df = pd.DataFrame(stability_data)
+    
+    # --- Metric 3: Daily Volatility ---
+    volatility_data = []
+    prev_entities = None
+    
+    for date in dates:
+        day_data = df[df['Date'] == date]
+        active = set(day_data[day_data[citation_col] > 0][entity_col].unique())
+        
+        if prev_entities is not None:
+            retained = active & prev_entities
+            new = active - prev_entities
+            
+            retained_citation = day_data[day_data[entity_col].isin(retained)][citation_col].sum()
+            new_citation = day_data[day_data[entity_col].isin(new)][citation_col].sum()
+            
+            volatility_data.append({
+                'Date': date,
+                'Retained': retained_citation,
+                'New': new_citation
+            })
+        else:
+            # First day - all are "new"
+            total_citation = day_data[citation_col].sum()
+            volatility_data.append({
+                'Date': date,
+                'Retained': 0,
+                'New': total_citation
+            })
+        
+        prev_entities = active
+    
+    volatility_df = pd.DataFrame(volatility_data)
+    
+    return {
+        'velocity_index': velocity_index,
+        'stability_df': stability_df,
+        'volatility_df': volatility_df
+    }
 
 
 def verify_accuranker_data(tasks, openai_client, progress_callback=None):
