@@ -5884,7 +5884,7 @@ elif current_page == "AI Powered Tools":
 
 # --- PAGE: RANDOM TOOLS ---
 elif current_page == "Random Tools":
-    tabs = st.tabs(["Sitemap Checker", "URL Classifier", "Ahrefs Top Pages Visualizer", "GSC BigQuery Visualizer"])
+    tabs = st.tabs(["Sitemap Checker", "URL Classifier", "Ahrefs Top Pages Visualizer", "GSC BigQuery Visualizer", "📝 Document Difference"])
     
     with tabs[0]:
         st.markdown("#### Sitemap Checker")
@@ -6722,4 +6722,169 @@ elif current_page == "Random Tools":
                 mime="text/csv",
             )
 
+    with tabs[4]:
+        st.markdown("#### 📝 Document Difference")
+        st.markdown("Upload one or more Word documents (`.docx`) to analyze their tracked changes. The AI will classify the types of edits made.")
+        
+        doc_files = st.file_uploader("Upload .docx files", type=["docx", "doc"], accept_multiple_files=True, key="doc_diff_uploader")
+        
+        if st.button("Analyze Tracked Changes", type="primary", key="doc_diff_run"):
+            if not doc_files:
+                st.warning("Please upload at least one .docx file.")
+            else:
+                import zipfile
+                import xml.etree.ElementTree as ET
+                
+                def analyze_docx_changes(file_obj):
+                    ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+                    try:
+                        with zipfile.ZipFile(file_obj) as z:
+                            if 'word/document.xml' not in z.namelist():
+                                return {"error": "Not a valid openxml docx file."}
+                            doc_xml = z.read('word/document.xml')
+                    except Exception as e:
+                        return {"error": f"Failed to read docx: {e}"}
+                        
+                    tree = ET.fromstring(doc_xml)
+                    
+                    ins_texts = []
+                    del_texts = []
+                    normal_length = 0
+                    ins_length = 0
+                    del_length = 0
+                    first_headline = None
+                    
+                    for p in tree.findall('.//w:p', ns):
+                        p_text_parts = []
+                        for child in p:
+                            if child.tag == f"{{{ns['w']}}}r":
+                                t = child.find('w:t', ns)
+                                if t is not None and t.text:
+                                    p_text_parts.append(t.text)
+                                    normal_length += len(t.text)
+                            elif child.tag == f"{{{ns['w']}}}ins":
+                                for r in child.findall('w:r', ns):
+                                    t = r.find('w:t', ns)
+                                    if t is not None and t.text:
+                                        p_text_parts.append(t.text)
+                                        ins_texts.append(t.text)
+                                        ins_length += len(t.text)
+                                        normal_length += len(t.text)
+                            elif child.tag == f"{{{ns['w']}}}del":
+                                for delText in child.findall('.//w:delText', ns):
+                                    if delText is not None and delText.text:
+                                        del_texts.append(delText.text)
+                                        del_length += len(delText.text)
+                                        
+                        p_text = "".join(p_text_parts).strip()
+                        if p_text and not first_headline:
+                            first_headline = p_text
 
+                    total_length = normal_length + del_length
+                    change_rate = 0.0
+                    if total_length > 0:
+                        change_rate = ((ins_length + del_length) / total_length) * 100
+                        
+                    return {
+                        "title": first_headline if first_headline else "Unknown Title",
+                        "ins_texts": " ".join(ins_texts),
+                        "del_texts": " ".join(del_texts),
+                        "change_rate": change_rate,
+                        "has_changes": (ins_length + del_length) > 0
+                    }
+                
+                def classify_changes_ai(client_obj, title, change_rate, ins_texts, del_texts, has_changes):
+                    if not has_changes:
+                        return "No tracked changes found."
+                    
+                    ins_summary = ins_texts[:1500]
+                    del_summary = del_texts[:1500]
+                    
+                    system_prompt = "You are an expert editor who concisely classifies the types of tracked changes made in a document."
+                    user_prompt = f"""
+                    Title: {title}
+                    Change rate: {change_rate:.1f}%
+                    Insertions (sample): {ins_summary}
+                    Deletions (sample): {del_summary}
+                    
+                    Describe the types of edits made in maximum 1 descriptive sentence. 
+                    Examples: 'Added Key Takeaways section.', 'Minor copyedits in the body text.', 'Major structural overhaul.', 'Added Key Takeaways and small grammar fixes.'
+                    """
+                    
+                    try:
+                        response = client_obj.chat.completions.create(
+                            model="gpt-4o",
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt}
+                            ],
+                            temperature=0.3,
+                            max_tokens=60
+                        )
+                        return response.choices[0].message.content.strip()
+                    except Exception as e:
+                        return f"AI Classification Failed"
+
+                results = []
+                with st.spinner("Analyzing and classifying documents..."):
+                    progress_bar = st.progress(0)
+                    for i, doc_file in enumerate(doc_files):
+                        analysis = analyze_docx_changes(doc_file)
+                        if "error" in analysis:
+                            st.error(f"{doc_file.name}: {analysis['error']}")
+                            continue
+                            
+                        classification = classify_changes_ai(
+                            client, 
+                            analysis["title"], 
+                            analysis["change_rate"], 
+                            analysis["ins_texts"], 
+                            analysis["del_texts"],
+                            analysis["has_changes"]
+                        )
+                        
+                        results.append({
+                            "File name": doc_file.name,
+                            "Title": analysis["title"],
+                            "_raw_change_rate": analysis["change_rate"],
+                            "Change Classification": classification
+                        })
+                        progress_bar.progress((i + 1) / len(doc_files))
+                
+                if results:
+                    st.success(f"Analysis complete for {len(results)} document(s)!")
+                    
+                    # Sort results descending by numeric change_rate
+                    results = sorted(results, key=lambda x: x["_raw_change_rate"], reverse=True)
+                    
+                    # Create display version and remove raw column
+                    for r in results:
+                        r["Change rate"] = f"{r['_raw_change_rate']:.1f}%"
+                        del r["_raw_change_rate"]
+                        
+                    # Reorder columns to ensure Change rate is placed properly
+                    df_results = pd.DataFrame(results)[["File name", "Title", "Change rate", "Change Classification"]]
+                    st.dataframe(df_results, width="stretch", hide_index=True)
+                    
+                    st.markdown("---")
+                    st.markdown("##### Export Data")
+                    csv_format_diff = st.selectbox(
+                        "CSV Export Format", 
+                        ["Standard CSV (, separator, . decimal)", "EU Excel Ready (; separator, , decimal)"], 
+                        key="csv_format_diff"
+                    )
+                    
+                    if "EU Excel" in csv_format_diff:
+                        df_csv_diff = df_results.copy()
+                        # Replace . with , in the formatted string "XX.X%"
+                        df_csv_diff["Change rate"] = df_csv_diff["Change rate"].str.replace('.', ',')
+                        csv_data_diff = df_csv_diff.to_csv(index=False, sep=';').encode('utf-8')
+                    else:
+                        csv_data_diff = df_results.to_csv(index=False).encode('utf-8')
+                        
+                    st.download_button(
+                        label="📥 Download Differences Data",
+                        data=csv_data_diff,
+                        file_name="document_differences.csv",
+                        mime="text/csv",
+                    )
